@@ -1,0 +1,840 @@
+---
+title: "Initial merging of all files"
+author: Jake & Sanmi, modified by Filbert
+date: "1/22/2021"
+output: html_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(tidyverse)
+library(readxl)
+```
+Source data from
+1) qPCR results
+2) screening PCR results partially merged with temp & sx_current
+3) culture results latest
+4) serology results latest
+5) StopCOVID REDCap projects, deidentifed
+
+Output:
+1) demohist table, demographics and medical history and all other variables which exist only once for each subject ID
+2) screening PCR table, with merged data pertaining to clinical visits
+3) qPCR table, merged with culture data
+4) serology table
+Bundled in one R object that is a list() of all four tables
+```{r read source files}
+sx <- read.csv(file="../source_data/ncovPCRtempsxresults1_210805.csv",stringsAsFactors = F) # screening PCR data, merged with temperature and symptoms reported that day (if available)
+rc <- readRDS("../source_data/ncovrcmain-deid.RData") # this is the main REDCap project that the clinic interacts with
+rcdt <- readRDS("../source_data/ncovrcdt-deid.RData") # this REDCap project has the surveys sent to participants on a daily basis via text message
+
+nrow(sx)
+head(sx)
+sx %>% group_by(redcap_event_name) %>% summarise(n=n())
+
+nrow(rc)
+head(rc)
+
+nrow(rcdt)
+head(rcdt)
+```
+Onset of symptoms dates from rc:
+In the baseline survey, participants are asked when they thought their symptoms started. If they came in for shedding or contact visits, participants who reported symptoms were also asked (again, sometimes multiple times) when their symptoms were started. Occasionally this leads to conflicting reports in the date. Generally we took the earliest date as the most accurate, but for a couple participants we felt their most accurate answers came from email communications (before they had enrolled)
+```{r onset sx calcs}
+covidsubjs <- rc %>% filter(covid_pos=='1') %>% pull(subject_id) %>% as.numeric() %>% sort() # covid_pos is set to 1 if the screening PCR was positive
+allsymptoms <- c("nose_run","nose_stuf","sneeze","throat_sr","earache","malaise","headache","mj_ache","sw_fever_chill","nausea","loa","vomit","diarrhea","chest_tight","sob","cough","taste_smell_yn")
+
+# primary source of onset of symptoms date comes from "Symptom Card Retrospective"
+onsetdates <- rc %>% filter((subject_id %in% covidsubjs) & !is.na(time_feel_sick_ret)) %>% select(subject_id,time_feel_sick_ret)
+onsetdates$onsetdate_ret <- onsetdates$time_feel_sick_ret %>% substr(1,10) %>% as.Date(origin="1970-01-01") %>% as.character()
+
+# we collected onset of symptoms date from the daily symptom card too
+sxdates <- rc %>% filter((subject_id %in% covidsubjs) & !is.na(symptom_time) & (grepl("shedding|contact",redcap_event_name))) %>% select(subject_id,symptom_time,redcap_event_name,sx_days)
+sxdates$symptom_time <- sxdates$symptom_time %>% substr(1,10) %>% as.Date(origin="1970-01-01")
+sxdates$calculated_onset <- (sxdates$symptom_time - as.numeric(sxdates$sx_days)) %>% as.character()
+collapsed_onsetdates <- covidsubjs %>% sapply(function(x) {sxdates %>% filter(subject_id==x) %>% pull(calculated_onset) %>% na.omit() %>% sort() %>% unique() %>% paste(collapse=" ")}) # collapsed onset dates into a single text field
+
+sxdates_collated <- c(covidsubjs,collapsed_onsetdates) %>% matrix(ncol=2) %>% as.data.frame(stringsAsFactors=F) # make it into a data frame for convenience
+colnames(sxdates_collated) <- c("subject_id","onset_from_sx_card")
+onsetdates <- onsetdates %>% full_join(sxdates_collated,by="subject_id") # this puts together
+onsetdates <- onsetdates %>% arrange(subject_id) %>% select(-c("time_feel_sick_ret"))
+onsetdates[is.na(onsetdates)] <- ""
+onsetdates$subject_id <- onsetdates$subject_id %>% as.numeric()
+
+# decide to take the earliest onset date as the "real" onset date
+onsetdates$real_onset <- paste(onsetdates$onsetdate_ret,onsetdates$onset_from_sx_card) %>% 
+  lapply(function(x) {
+    if (x==" ") {
+      NA
+    } else {
+      x %>% strsplit(" ") %>% unlist() %>% subset(.!="") %>% as.Date(origin="1970-01-01") %>% min() # if there are multiple possible dates, take the earliest date
+    }
+  }) %>% unlist() %>% as.Date(origin="1970-01-01")
+summary(onsetdates$real_onset)
+
+# there are 6 NAs because these people had neither onset_from_sx_card or onsetdate_ret
+# 323 had onsetdate_ret but not onset_from_sx_card. That's because 323 declined to report the number of days from onset on 11/4, and then had no symptoms on 11/6.
+
+# corrections curated by Sanmi for subjects 88 and 336
+# 336 (11/11/2020) and 88 (7/11/2020)
+onsetdates<-rbind(onsetdates,onsetdates[nrow(onsetdates)+1,])
+onsetdates$subject_id[nrow(onsetdates)]<-88
+onsetdates$real_onset[nrow(onsetdates)]<-"2020-07-11"
+onsetdates<-rbind(onsetdates,onsetdates[nrow(onsetdates)+1,])
+onsetdates$subject_id[nrow(onsetdates)]<-336
+onsetdates$real_onset[nrow(onsetdates)]<-"2020-11-11"
+
+nrow(onsetdates)
+head(onsetdates) # note that some participants will have no onset dates if they didn't have symptoms
+summary(onsetdates)
+```
+demohist: demographics, medical history, things that depend only on subject_id and not on date
+```{r demographics 1}
+# Age: NA to fill in outliers i.e. those entering today's date and birthdate
+rc[which(rc$calc_eligibility<1),"subject_id"] # subject ids of wrongly entered date of births
+hist(as.numeric(rc$calc_eligibility),xlab = "Age")
+rc[which(rc$calc_eligibility<1),"calc_eligibility"] <- NA # set them to NA
+
+# the age variable is in the subject tracker event; other variables are in baseline survey
+demohist_base <- rc %>% filter(grepl("baseline",redcap_event_name))
+nrow(demohist_base) # which equals the number of records created, but not all records turned out to be enrolled participants
+subj_age <- rc %>% filter(grepl("subject",redcap_event_name)) %>% select(subject_id,calc_eligibility)
+demohist_base$calc_eligibility <- NULL # we're replacing this column
+demohist_base <- demohist_base %>% left_join(subj_age,by="subject_id")
+
+# remove participants who did not consent and finish the baseline survey
+demohist_enrolled <- demohist_base %>% filter(survey_conclusion_complete!=0)
+
+# demographics race questions
+racecols <- colnames(rc) %>% subset(grepl("race_",.)) 
+# chronic respiratory illness, drinks per week, race, BMI, ox_sat, symptoms_ret
+demohistcols <- c("subject_id","redcap_event_name","calc_eligibility","sex_birth",
+              "asthma","allerg","copd","cf","bronchitis","emphys","lung_other",
+              "alc_week","drinks_p_day",
+              "cigarette_ever",
+              "singing_lessons","singing_ensemble",
+              "latino",
+              racecols, "other_race")
+demohist_all <- demohist_enrolled %>% select(all_of(demohistcols))
+
+# "tag" variable just keeps track of which arm a participant entered into the study
+demohist_all$tag<- demohist_all$redcap_event_name %>% gsub("\\D+","",.)
+demohist_all$tag[demohist_all$redcap_event_name=="baseline_arm_1"]<-"Surveillance entry"
+demohist_all$tag[demohist_all$redcap_event_name=="case_baseline_arm_2"]<-"Case entry"
+demohist_all$tag[demohist_all$redcap_event_name=="contact_baseline_arm_3"]<-"Contact entry"
+demohist_all$tag[demohist_all$redcap_event_name=="baseline_followup_arm_4"]<-"IR entry"
+demohist_all$redcap_event_name <- NULL
+
+# chronic respiratory illness
+cri_col <-c("asthma","allerg","copd","cf","bronchitis","emphys","lung_other")
+demohist_all$cri <- demohist_all[,cri_col] %>% apply(1,function(x) {if (any(x==1)) {1} else {0}}) 
+demohist_all[,cri_col] <- NULL # cri columns are temporary
+
+# drinks per week
+demohist_all$drinks_p_week <- as.numeric(demohist_all$drinks_p_day) * as.numeric(demohist_all$alc_week)
+demohist_all$drinks_p_week[which(is.na(demohist_all$drinks_p_week))] <- 0
+demohist_all$drinks_p_week[which(as.numeric(demohist_all$alc_week)>7)] <- NA # someone put drinks_p_week = 41
+
+# racelabels
+racelabels<-c("White","Black or African American","American Indian or Alaska Native","Asian Indian","Chinese","Filipino","Japanese","Korean","Vietnamese","Cambodian","Laotian","Other Asian","Native Hawaiian","Other Pacific Islander",
+"Other race","Don't Know","Decline")
+racecolswhich <- which(colnames(demohist_all) %in% racecols)
+colnames(demohist_all)[racecolswhich] <- racelabels
+
+# most of these "other" races are not actually races
+otherraceanswers <- c("Mexican","Hispanic","Jewish/Iranian","Jewish","Middle Eastern","Lebanese")
+demohist_all$`Other race`[demohist_all$other_race %in% otherraceanswers] <- "0"
+demohist_all$White[demohist_all$other_race %in% otherraceanswers] <- "1"
+demohist_all$race <- demohist_all[,racelabels] %>% apply(1,function(x) {x %>% subset(.==1) %>% names() %>% paste(collapse="-")})
+
+# check that all participants checked at least one race box off
+demohist_enrolled %>% select(racecols) %>% apply(1,function(x) {x %>% as.numeric() %>% sum()}) %>% unique()
+
+demohist_all$multiracial <- demohist_all$race %>% sapply(function(x) {if (grepl("-",x)) {"Yes"} else {"No"}})
+demohist_all[,racelabels] <- NULL #remove race columns
+
+# BMI data frame
+bmi <- rc %>% filter(!is.na(bmi)) %>% select(subject_id,redcap_event_name,bmi)
+# 255 provided bmi twice, due to becoming a case twice. Use the average
+bmidupesubjs <- bmi$subject_id %>% subset(duplicated(.)) %>% unique()
+for (i in bmidupesubjs) {
+  j <- bmi %>% filter(subject_id==i)
+  k <- j[1,]
+  k$bmi[1] <- j$bmi %>% as.numeric() %>% mean() %>% round(2)
+  bmi <- bmi %>% filter(subject_id!=i)
+  bmi <- bmi %>% bind_rows(k)
+}
+
+# define symptom categories: upper respiratory, lower respiratory, systemic, and gi
+
+ur_sx <- c("nose_run","nose_stuf", "sneeze", "throat_sr", "earache")
+lr_sx <- c("chest_tight", "sob", "cough")
+sys_sx <- c("malaise", "headache", "mj_ache", "sw_fever_chill")
+gi_sx <- c("loa", "vomit", "diarrhea", "nausea")
+
+ur_sx_ret <- ur_sx %>% paste0("_ret")
+lr_sx_ret <- lr_sx %>% paste0("_ret")
+sys_sx_ret <- sys_sx %>% paste0("_ret")
+gi_sx_ret <- gi_sx %>% paste0("_ret")
+all_sx_ret <- c(ur_sx_ret,lr_sx_ret,sys_sx_ret,gi_sx_ret)
+smell_medcare <- c("taste_smell_yn_covid_ret","sx_med_care_ret")
+
+# retrospective symptoms at peak severity was asked at IR follow-up, so the baseline ret values are excluded
+ret_symp <- rc %>% filter(grepl("ir",redcap_event_name)) %>%
+  select(subject_id,all_of(all_sx_ret),all_of(smell_medcare))
+
+# there was someone who filled out two IR surveys - they had scheduled a visit then postponed it - so need to dedupe ret_symp 
+retsympdupesubjs <- ret_symp$subject_id %>% subset(duplicated(.)) %>% unique()
+for (i in retsympdupesubjs) {
+  j <- ret_symp %>% filter(subject_id==i)
+  k <- j[1,]
+  k[1,all_sx_ret] <- j[,all_sx_ret] %>% apply(2,max)
+  ret_symp <- ret_symp %>% filter(subject_id!=i)
+  ret_symp <- ret_symp %>% bind_rows(k)
+}
+
+ret_symp[,all_sx_ret] <- ret_symp[,all_sx_ret] %>% apply(2,as.numeric)
+ret_symp$ur_ret <- ret_symp[,ur_sx_ret] %>% apply(1,sum)
+ret_symp$lr_ret <- ret_symp[,lr_sx_ret] %>% apply(1,sum)
+ret_symp$sys_ret <- ret_symp[,sys_sx_ret] %>% apply(1,sum)
+ret_symp$gi_ret <- ret_symp[,gi_sx_ret] %>% apply(1,sum)
+
+ret_symp %>% filter(is.na(ur_ret)) %>% select(all_of(ur_sx_ret)) %>% unlist() %>% unique()
+ret_symp %>% filter(is.na(lr_ret)) %>% select(all_of(lr_sx_ret)) %>% unlist() %>% unique()
+ret_symp %>% filter(is.na(sys_ret)) %>% select(all_of(sys_sx_ret)) %>% unlist() %>% unique()
+ret_symp %>% filter(is.na(gi_ret)) %>% select(all_of(gi_sx_ret)) %>% unlist() %>% unique()
+# checked that ret sum scores are NA because all ret symptoms are NA
+
+# merge demohist_all, ret_symp, bmi, onset dates by subject id
+
+demohist <- demohist_all %>% left_join(bmi %>% select(subject_id,bmi),by="subject_id") # attach BMI
+demohist <- demohist %>% left_join(ret_symp,by="subject_id") # attach restrospective symptoms
+onsetdates$subject_id <- onsetdates$subject_id %>% as.character()
+demohist <- demohist %>% left_join(onsetdates %>% select(subject_id,real_onset),by="subject_id") # attach symptom onset dates
+# demohist$survey_date <- NULL
+demohist <- demohist %>% rename(age_entry=calc_eligibility)
+demohist$age_entry <- demohist$age_entry %>% as.numeric() %>% floor()
+demohist <- demohist %>% rename(study_id=subject_id)
+
+# define the date_of_enrollment as the date of a participant's first clinic visit
+demohist$date_of_enrollment <- demohist$study_id %>%
+  lapply(function(x) {rc %>% filter(subject_id==x & !is.na(time_of_visit)) %>% pull(time_of_visit) %>% substr(1,10)}) %>%
+  lapply(function(x) {if (length(x)==0) {NA} else {x}}) %>%
+  lapply(function(x) {x %>% as.Date(origin="1970-01-01") %>% min()}) %>%
+  unlist() %>%
+  as.Date(origin="1970-01-01")
+
+demohist$date_of_enrollment %>% unique()
+demohist$date_of_enrollment %>% summary()
+
+nrow(demohist)
+head(demohist)
+summary(demohist)
+```
+screening pcr data frame
+
+```{r screening pcr}
+# a pulse oximeter was used to measure SPO2 at every visit
+spo2 <- rc %>% filter(!is.na(ox_sat)) %>% select(subject_id,redcap_event_name,time_pulseox_measured,ox_sat)
+spo2$date_pulseox_measured <- spo2$time_pulseox_measured %>% substr(1,10) %>% as.Date(origin="1970-01-01")
+
+# merge spo2 to sx (pcr results by subject id and sample date)
+sx$helper1 <- paste(sx$subject_id,sx$sample_date)
+spo2$helper1 <- paste(spo2$subject_id,spo2$date_pulseox_measured)
+pcr_sx_temp_spo2 <- sx %>% left_join(spo2 %>% select(helper1,ox_sat),by="helper1")
+pcr_sx_temp_spo2$helper1 <- NULL
+
+# oral_temp, fever_samp, fever_ever (modify demohist), days_past_onset = as.numeric(date_visit - real_onset)
+pcr_screen <- pcr_sx_temp_spo2
+pcr_screen <- pcr_screen %>% rename(study_id=subject_id)
+pcr_screen$study_id <- pcr_screen$study_id %>% as.character()
+
+pcr_screen$oral_temp <- pcr_screen$oral_temp %>% sapply(function(x) {if (!is.na(x)) {if (x>50) {((x- 32 ) * 5/9) %>% round(2)} else {x}} else {x}}) # if !NA, then check if temperatures were recorded in F instead of C
+pcr_screen$fever_samp <- (pcr_screen$oral_temp>=37.8) %>% as.numeric() # 37.8 is our definition of a fever
+pcr_screen$sample_date <- pcr_screen$sample_date %>% as.Date(origin="1970-01-01")
+pcr_screen <- pcr_screen %>% left_join(demohist %>% select(study_id,real_onset),by="study_id")
+pcr_screen$days_past_onset <- as.numeric(pcr_screen$sample_date-pcr_screen$real_onset)
+pcr_screen$real_onset <- NULL
+
+pcr_screen$ct_avg_screen <- pcr_screen[,c("S.gene","N.gene","ORF1ab")] %>% apply(1,mean)
+pcr_screen <- pcr_screen %>% rename(ct_sgene_screen=S.gene,ct_ngene_screen=N.gene,ct_orf1ab_screen=ORF1ab)
+pcr_screen <- pcr_screen %>% rename(tac_id=TAC.ID)
+pcr_screen$helper2 <- NULL
+
+# attach compound symptom scores
+pcr_screen$ur <- pcr_screen[,ur_sx] %>% apply(1,sum)
+pcr_screen$lr <- pcr_screen[,lr_sx] %>% apply(1,sum)
+pcr_screen$gi <- pcr_screen[,gi_sx] %>% apply(1,sum)
+pcr_screen$sys <- pcr_screen[,sys_sx] %>% apply(1,sum)
+
+summary(pcr_screen)
+
+# attach fever_ever to demohist
+#demohist$fever_ever <- demohist$study_id %>% sapply(function(x) {pcr_screen %>% filter(study_id==x) %>% pull(fever_samp) %>% sum() %>% `>`(0)})
+fever_ever <- demohist$study_id %>% sapply(function(x) {pcr_screen %>% filter(study_id==x) %>% pull(fever_samp) %>% na.omit()})
+fever_ever <- fever_ever %>% lapply(function(x) {if (length(x)==0) {NA} else {x}}) # convert character(0) to NA
+fever_ever <- fever_ever %>% lapply(function(x) {x %>% sum() %>% `>`(0)}) %>% unlist()
+
+demohist$fever_ever <- fever_ever
+summary(demohist$fever_ever)
+```
+quantitative PCR
+
+Conversion of reaction quantity (rxn_quant) to sample quantity (sample_quant), in RNA copies per mL:
+Multiply rxn_quant by 20.8333 (=125/6) for saliva samples, by 25 for all other samples. These were the standard dilution from extracted samples.
+
+"There are a couple of samples (NA0035966889 & NA0035967370) that need a different ratio because they didn’t have enough volume for extraction." - hardcoded below as 125/3 and 39.0635 respectively
+```{r quantitative PCR data}
+qpcrnewfile <-"../source_data/RT-qPCR_results_20210611.csv"
+qpcrnew <- read.csv(file=qpcrnewfile,stringsAsFactors=F)
+
+# get subject id, date of collection, and sample type from StopCOVID sample listing
+allsamples <- read.csv("../source_data/StopCOVIDsamples.csv",colClasses = "character") %>% select(study_id, sample_type, sample_id, date_collected_sg,event_id) %>% rename(sample_date=date_collected_sg,redcap_event_name=event_id)
+
+nrow(allsamples)
+
+# samples up to what date
+max(qpcrnew$exp_date) %>% substr(1,8) %>% as.Date(origin="1970-01-01",format="%Y%m%d")
+
+# merge pcr with StopCOVID allsamples list
+qpcr_allsamples <- qpcrnew %>% left_join(allsamples %>% select(study_id,sample_type,sample_id,sample_date), by = "sample_id")
+nrow(qpcr_allsamples)
+
+qpcr_allsamples$sample_quant <- qpcr_allsamples$rxn_quant * 25
+qpcr_allsamples$sample_quant[qpcr_allsamples$sample_type=="Saliva Derivative"] <- qpcr_allsamples$rxn_quant[qpcr_allsamples$sample_type=="Saliva Derivative"] * (125/6)
+qpcr_allsamples$sample_quant[qpcr_allsamples$sample_id=="NA0035967370"] <- qpcr_allsamples$rxn_quant[qpcr_allsamples$sample_id=="NA0035967370"] * 39.0635
+qpcr_allsamples$sample_quant[qpcr_allsamples$sample_id=="NA0035966889"] <- qpcr_allsamples$rxn_quant[qpcr_allsamples$sample_id=="NA0035966889"] * (125/3)
+qpcr_allsamples <- qpcr_allsamples %>% rename(exp_name=exp_date)
+qpcr_allsamples$exp_date <- qpcr_allsamples$exp_name %>% substr(1,8) %>% as.Date(origin="1970-01-01",format="%Y%m%d")
+
+nrow(qpcr_allsamples)
+summary(qpcr_allsamples)
+```
+# Read in the mask, cough, G-II session number, G-II reservoir time data and merge with the qRT-PCR plus sample identify key dataset; clean
+cough_count set to -1 if for some reason the operator left the column blank.
+cough_count and reserv_time are set to -999 if not a G-II sample.
+```{r mask cough G-II data}
+masks_cough <- read.csv("../source_data/ncovg2samplesmasksyn.csv",colClasses = "character")
+nrow(masks_cough)
+head(masks_cough)
+
+masks_cough_clean1 <- masks_cough
+masks_cough_clean1$mask_type[is.na(masks_cough_clean1$mask_type)] <- "no mask"
+masks_cough_clean1$cough_count[is.na(masks_cough_clean1$cough_count)] <- 0 # the missing ones were in fact done, no coughs, operators forgot to record
+masks_cough_clean1$cone_barcode[is.na(masks_cough_clean1$cone_barcode)] <- ""
+allbarcodefields <- colnames(masks_cough_clean1) %>% subset(grepl("fine|coarse|cone",.))
+masks_cough_clean1$allbarcodes <- masks_cough_clean1[,allbarcodefields] %>% apply(1,function(x) {x %>% unlist() %>% paste(collapse=";")})
+
+# transfer mask, cough, reservoir time, and session number over to qpcr_allsamples
+maskscoughtransfercols <- c("sessnum","mask_yn","mask_type","cough_count","reserv_time")
+maskstransfercolsfac <- c("sessnum","mask_type","mask_yn") 
+maskstransfercolsnum <- c("cough_count","reserv_time")
+for (i in 1:nrow(qpcr_allsamples)) {
+  if (grepl("G2|G-II",qpcr_allsamples$sample_type[i])) {
+    j <- masks_cough_clean1 %>% filter(grepl(qpcr_allsamples$sample_id[i],allbarcodes))
+    qpcr_allsamples[i,maskscoughtransfercols] <- j[1,maskscoughtransfercols]
+  } else {
+    qpcr_allsamples[i,maskstransfercolsfac] <- "not a G-II sample"
+    qpcr_allsamples[i,maskstransfercolsnum] <- "-999" # not a G-II sample but numeric
+  }
+}
+qpcr_allsamples <- qpcr_allsamples %>% rename(gii_sessnum=sessnum)
+summary(qpcr_allsamples)
+```
+Additional breath sample data cleaning
+- Adjust for reservoir time: adjust sample_quant and cough counts to account for time if less than 30 min -- standardize these variables as per 30 min in order to allow for like-comparisons between samples.
+- Give the masked G-II sample replicates an indicator as part of their name that they are masked samples
+- Add a cens variable indicator if replicate is nondetect
+- Add an indicator if replicate is nondetectable (=0), between LOD and LOQ (=1), or above LOQ (=2)
+- Add an indicator if G-II samples present for study_id-date_visit combination
+```{r additional breath sample data cleaning}
+# attach "mask" to sample type if mask_yn=="1"
+qpcr_allsamples$sample_type[qpcr_allsamples$mask_yn=="1"] <- qpcr_allsamples$sample_type[qpcr_allsamples$mask_yn=="1"] %>% paste("mask")
+
+# old variable cens sample_quant<250
+# qpcr_allsamples$cens <- (qpcr_allsamples$sample_quant<250) %>% as.numeric()
+# new variable cens
+qpcr_allsamples$cens <- (qpcr_allsamples$sample_quant==0) %>% as.numeric()
+
+# new variable nd_lod_loq is 0 if sample_quant=0, 1 if sample_quant<250, nd_lod_loq is 2 if sample_quant>=250
+qpcr_allsamples$nd_lod_loq[qpcr_allsamples$sample_quant==0] <- 0
+qpcr_allsamples$nd_lod_loq[which(qpcr_allsamples$sample_quant<250 & qpcr_allsamples$sample_quant>0)] <- 1
+qpcr_allsamples$nd_lod_loq[qpcr_allsamples$sample_quant>=250] <- 2
+
+# gii indicates if a gii session
+# gii_reps is the number of gii replicates = sum(gii)
+qpcr_allsamples$gii <- (qpcr_allsamples$gii_sessnum!="not a G-II sample") %>% as.numeric()
+qpcr_allsamples <- qpcr_allsamples %>% group_by(study_id,sample_date) %>% mutate(gii_reps=sum(gii)) %>% ungroup()
+
+# remove "Derivative"
+qpcr_allsamples$sample_type <- qpcr_allsamples$sample_type %>% gsub(" Derivative","",.)
+
+# adjust sample_quant and cough: if reserve_time<30, sample_quant and cough should be scaled proportionately
+for (i in 1:nrow(qpcr_allsamples)) {
+  if (qpcr_allsamples$reserv_time[i]!=-999) {
+    if (qpcr_allsamples$reserv_time[i]<30) {
+      qpcr_allsamples$sample_quant[i] <- qpcr_allsamples$sample_quant[i]*(30/as.numeric(qpcr_allsamples$reserv_time[i]))
+      qpcr_allsamples$cough_count[i] <- as.numeric(qpcr_allsamples$cough_count[i])*(30/as.numeric(qpcr_allsamples$reserv_time[i]))
+    }
+  }
+}
+
+# additional lod loq variable indicators (originally in comb_then_split)
+
+qpcr_allsamples$any_rep_lod1 <- qpcr_allsamples$sample_id %>% sapply(function(x) {qpcr_allsamples %>% filter(sample_id==x) %>% pull(nd_lod_loq) %>% `>`(0) %>% any()})
+
+qpcr_allsamples$all_rep_lod2 <- qpcr_allsamples$sample_id %>% sapply(function(x) {qpcr_allsamples %>% filter(sample_id==x) %>% pull(nd_lod_loq) %>% `>`(0) %>% all()})
+
+qpcr_allsamples$all_rep_loq <- qpcr_allsamples$sample_id %>% sapply(function(x) {qpcr_allsamples %>% filter(sample_id==x) %>% pull(nd_lod_loq) %>% `>`(1) %>% all()})
+  
+# av_quant (originally in comb_then_split)
+qpcr_allsamples$av_quant <- qpcr_allsamples$sample_id %>% sapply(function(x) {qpcr_allsamples %>% filter(sample_id==x) %>% pull(sample_quant) %>% mean()})
+
+# s_gene_pos_id (originally in comb_then_split)
+qpcr_allsamples$S.gene.dropout <- qpcr_allsamples$study_id %>% sapply(function(x) {qpcr_allsamples %>% filter(study_id==x) %>% pull(ct_sgene_qpcr) %>% `<`(0) %>% all()})
+
+# loq (originally in comb_then_split)
+qpcr_allsamples$loq <- (qpcr_allsamples$av_quant >= 250)
+
+# mdfy_sample_quant (originally in other scripts) 75 as the censored upper limit
+qpcr_allsamples$mdfy_sample_quant <- qpcr_allsamples$sample_quant %>% sapply(function(x) {if (x==0) {75} else {x}}) 
+```
+# fix sample type names
+```{r}
+pcr_screen$sample_type[pcr_screen$sample_type=="MT"] <- "Midturbinate Swab"
+pcr_screen$sample_type[pcr_screen$sample_type=="Anterior Nasal Swab Derivative"] <- "Anterior Nasal Swab"
+pcr_screen$sample_type[pcr_screen$sample_type=="Saliva-Pooled"] <- "Saliva"
+qpcr_allsamples$sample_type <- qpcr_allsamples$sample_type %>% gsub("G2","G-II",.)
+summary(pcr_screen)
+summary(qpcr_allsamples)
+```
+serology data frame
+first process the vaccination data from rc and rcdt: when did a participant report covid-19 vaccination?
+We only asked which month, but because of the way the surveys were sent and the questions structured, we can narrow it down to a possible window of dates
+```{r vaccination1 table}
+add.months <- function (date,n) {
+  return(seq(date, by = paste (n, "months"), length = 2)[2])
+}
+maincovidvaccols <- c("vacc_time","covid_shot_yn","covid_shot_m","covid_shot_where","covid_shot_type","covid_second_shot_yn","vacc_time_recent","covid_shot_yn_recent","covid_shot_m_recent","covid_shot_where_recent","covid_shot_type_recent","covid_second_shot_yn_recent","covid_shot2_2weeks","covid_shot2_2weeks_recent")
+maincovidshotcols <- c("covid_shot_yn","covid_second_shot_yn","covid_shot_yn_recent","covid_second_shot_yn_recent") # these are just the shot fields
+
+dtcovidcols <- c("time_daily_survey","covid_vacc_yn","covid_vacc_first_m","covid_vacc_sec_yn")
+dtcovidshotcols <- c("covid_vacc_yn","covid_vacc_sec_yn")# just the shot fields
+
+vaccmain <- rc %>% filter_at(vars(all_of(maincovidshotcols)),any_vars(!is.na(.))) %>% select(subject_id,redcap_event_name,redcap_repeat_instance,all_of(maincovidvaccols))
+vaccdt <- rcdt %>% filter_at(vars(all_of(dtcovidshotcols)),any_vars(!is.na(.))) %>% select(subject_id,redcap_event_name,redcap_repeat_instance,all_of(dtcovidcols))
+
+# who has no vaccine information because of no rows in vaccmain and vaccdt
+alldemohistsubjs <- demohist$study_id %>% unique()
+novaccinfosubjs <- alldemohistsubjs %>% subset(!(. %in% c(vaccmain$subject_id,vaccdt$subject_id)))
+
+# global first shot vaccination status
+vaccinfosubjs <- alldemohistsubjs %>% subset(!(. %in% novaccinfosubjs))
+
+globalvacc1status <- vaccinfosubjs %>% lapply(function(x) {c(
+  vaccmain %>% filter(subject_id==x) %>% select(covid_shot_yn,covid_shot_yn_recent) %>% unlist(),
+  vaccdt %>% filter(subject_id==x) %>% select(covid_vacc_yn) %>% unlist()
+  ) %>% paste(collapse=";")}) # first shot info from both data frames, into a single string with 1s, 0s, NAs
+names(globalvacc1status) <- vaccinfosubjs
+
+subjsnotvaccinatedstatus <- globalvacc1status %>% subset(lapply(.,function(x) {!grepl("1",x)}) %>% unlist()) # includes people who answered 9 (decline)
+subjsnotvaccinated <- names(subjsnotvaccinatedstatus)
+
+subjsvaccinatedstatus <- globalvacc1status %>% subset(lapply(.,function(x) {grepl("1",x)}) %>% unlist())
+subjsvaccinated <- names(subjsvaccinatedstatus)
+
+# demohist$vacc_status is "no info","not vaccinated","got first shot"
+demohist$vacc_status <- NA
+demohist$vacc_status[which(demohist$study_id %in% novaccinfosubjs)] <- "no info"
+demohist$vacc_status[which(demohist$study_id %in% subjsnotvaccinated)] <- "not vaccinated"
+demohist$vacc_status[which(demohist$study_id %in% subjsvaccinated)] <- "got first shot"
+summary(demohist$vacc_status %>% as.factor())
+
+# figure vaccine reported dates from the daily survey
+vacc1dtsubjs <- vaccdt %>% filter(covid_vacc_yn==1) %>% select(subject_id) %>% unlist()
+vacc1dthist <- vaccdt %>% filter((subject_id %in% vacc1dtsubjs) & !is.na(covid_vacc_yn))
+vaccdtdates <- data.frame()
+for (i in vacc1dtsubjs) {
+  j <- vacc1dthist %>% filter(subject_id==i)
+  j$time_daily_survey <- j$time_daily_survey %>% substr(1,10) %>% as.Date(origin="1970-01-01")
+  if (nrow(j)>1) {
+    # reduce to just two rows: the date when they reported yes, and the most recent immediately preceding time that they reported no. That gives us the window of vaccination
+    j1 <- j %>% arrange(desc(time_daily_survey)) %>% `[`(c(1,2),) %>% arrange(time_daily_survey)
+    kearly <- j1$time_daily_survey[1]
+    klate <- j1$time_daily_survey[2]
+    k <- c(i,as.character(kearly),as.character(klate))
+    # check the reported month just in case
+    jvaccmonth <- j1$covid_vacc_first_m[2] %>% as.numeric()
+    jsurveymonth <- j1$time_daily_survey[2] %>% substr(6,7) %>% as.numeric()
+    jyear <- 2021-as.numeric(jvaccmonth>jsurveymonth)
+    reportedj1early <- paste0(jyear,"-",jvaccmonth,"-01") %>% as.Date(origin="1970-01-01")
+    reportedj1late <- reportedj1early %>% add.months(1) %>% `-`(1)
+    
+    # check to see if the reported month agrees with the timing of daily surveys
+    surveywindow1 <- j1$time_daily_survey[1] %>% as.character() %>% substr(1,8) %>% paste0("01") %>% as.Date(origin="1970-01-01")
+    surveywindow2 <- j1$time_daily_survey[2] %>% as.character() %>% substr(1,8) %>% paste0("01") %>% as.Date(origin="1970-01-01")
+    surveywindow <- seq.Date(from=surveywindow1,to=surveywindow2,by="1 month")
+    if (reportedj1early %in% surveywindow) {
+      kearly1 <- max(kearly,reportedj1early) %>% as.character()
+      klate1 <-  min(klate,reportedj1late) %>% as.character()
+      k <- c(i,kearly1,klate1)
+    } else {
+      print(paste0("i = ",i," reported month error"))
+    }
+  } else { # for people who reported a first shot immediately after the amendment was created or when they first enrolled
+    jvaccmonth <- j$covid_vacc_first_m[1] %>% as.numeric()
+    jsurveymonth <- j$time_daily_survey[1] %>% substr(6,7) %>% as.numeric()
+    jyear <- 2021-as.numeric(jvaccmonth>jsurveymonth)
+    
+    kearly <- paste0(jyear,"-",jvaccmonth,"-01") %>% as.Date(origin="1970-01-01")
+    klate <- kearly %>% add.months(1) %>% `-`(1)
+    ksurvtime <- j$time_daily_survey[1] %>% substr(1,10) %>% as.Date(origin="1970-01-01") # going by daily survey datestamp
+    
+    klate1 <- min(klate,ksurvtime) %>% as.character()
+    k <- c(i,as.character(kearly),klate1)
+  }
+  names(k) <- c("subject_id","vaccdate1_1","vaccdate1_2")
+  vaccdtdates <- vaccdtdates %>% bind_rows(k)
+}
+vaccdtdates$vaccdate1_1 <- vaccdtdates$vaccdate1_1 %>% as.Date(origin="1970-01-01")
+vaccdtdates$vaccdate1_2 <- vaccdtdates$vaccdate1_2 %>% as.Date(origin="1970-01-01")
+vaccdtdates$window <- as.numeric(vaccdtdates$vaccdate1_2-vaccdtdates$vaccdate1_1)
+vaccdtdates$window %>% as.factor() %>% summary()
+vaccdtdates %>% filter(window<0) %>% nrow()
+
+# figure out vaccine reported dates from rcmain
+vacc1mainsubjs <- vaccmain %>% filter(covid_shot_yn=='1' | covid_shot_yn_recent=='1') %>% select(subject_id) %>% unlist() %>% unique() %>% as.numeric() %>% sort()
+vacc1mainhist  <- vaccmain %>% filter(subject_id %in% vacc1mainsubjs)
+vaccmaindates <-data.frame()
+for (i in vacc1mainsubjs) {
+  j0 <- vacc1mainhist %>% filter(subject_id==i)
+  j1 <- j0 %>% select(vacc_time,covid_shot_yn,covid_shot_m)
+  j2 <- j0 %>% select(vacc_time_recent,covid_shot_yn_recent,covid_shot_m_recent) %>% rename(vacc_time=vacc_time_recent,covid_shot_yn=covid_shot_yn_recent,covid_shot_m=covid_shot_m_recent)
+  j <- bind_rows(j1,j2) %>% filter(!is.na(vacc_time))
+  j$vacc_time <- j$vacc_time %>% substr(1,10) %>% as.Date(origin="1970-01-01")
+  j <- j %>% arrange(vacc_time)
+  if (j$covid_shot_yn[1]=='1') { # if there's only one row in j, or if the first j is already 1
+   # go by the month of the first or only row
+   jvaccmonth <- j$covid_shot_m[1] %>% as.numeric()
+   jsurveymonth <- j$vacc_time[1] %>% substr(6,7) %>% as.numeric()
+   jyear <- 2021-as.numeric(jvaccmonth>jsurveymonth)
+   kearly <- paste0(jyear,"-",jvaccmonth,"-01") %>% as.Date(origin="1970-01-01")
+   klate <- kearly %>% add.months(1) %>% `-`(1)
+   ksurvtime <- j$vacc_time[1] %>% as.Date(origin="1970-01-01") # going by daily survey datestamp
+   klate1 <- min(klate,ksurvtime) %>% as.character()
+   k <- c(i,as.character(kearly),klate1)
+  } else {
+   # possible vacc window from reported 
+   kearly <- j$vacc_time[1]
+   klate <- j$vacc_time[2]
+   k <- c(i,as.character(kearly),as.character(klate))
+   # check the reported month fits in the window
+   jvaccmonth <- j$covid_shot_m[2] %>% as.numeric()
+   jsurveymonth <- j$vacc_time[2] %>% substr(6,7) %>% as.numeric()
+   jyear <- 2021-as.numeric(jvaccmonth>jsurveymonth)
+   reportedj1early <- paste0(jyear,"-",jvaccmonth,"-01") %>% as.Date(origin="1970-01-01")
+   reportedj1late <- reportedj1early %>% add.months(1) %>% `-`(1)
+   
+   # check to see if the reported month agrees with the timing of daily surveys
+   surveywindow1 <- j$vacc_time[1] %>% as.character() %>% substr(1,8) %>% paste0("01") %>% as.Date(origin="1970-01-01")
+   surveywindow2 <- j$vacc_time[2] %>% as.character() %>% substr(1,8) %>% paste0("01") %>% as.Date(origin="1970-01-01")
+   surveywindow <- seq.Date(from=surveywindow1,to=surveywindow2,by="1 month")
+   if (reportedj1early %in% surveywindow) {
+     kearly1 <- max(kearly,reportedj1early) %>% as.character()
+     klate1 <-  min(klate,reportedj1late) %>% as.character()
+     k <- c(i,kearly1,klate1)
+   } else {
+     print(paste0("i = ",i," reported month error"))
+   }
+  }
+  names(k) <- c("subject_id","vaccdate1_1","vaccdate1_2")
+  vaccmaindates <- vaccmaindates %>% bind_rows(k)
+}
+vaccmaindates$vaccdate1_1 <- vaccmaindates$vaccdate1_1 %>% as.Date(origin="1970-01-01")
+vaccmaindates$vaccdate1_2 <- vaccmaindates$vaccdate1_2 %>% as.Date(origin="1970-01-01")
+vaccdates_firstshot <- bind_rows(vaccdtdates,vaccmaindates) %>% arrange(subject_id %>% as.numeric())
+
+# dedupe and combine dates from both sorts. Info from the daily survey will probably be more accurate
+vaccdupesubjs <- vaccdates_firstshot$subject_id %>% subset(duplicated(.)) %>% unique() %>% as.numeric() %>% sort()
+print(paste0("The following subjects have conflicting vacc1 dates: ",vaccdupesubjs %>% paste(collapse=" ")))
+for (i in vaccdupesubjs) {
+  j <- vaccdates_firstshot %>% filter(subject_id==i)
+  j1 <- vaccdtdates %>% filter(subject_id==i)
+  vaccdates_firstshot <- vaccdates_firstshot %>% filter(subject_id!=i)
+  vaccdates_firstshot <- vaccdates_firstshot %>% bind_rows(j1)
+}
+
+vaccdates_firstshot <- vaccdates_firstshot %>% arrange(subject_id %>% as.numeric()) %>% select(subject_id,vaccdate1_1,vaccdate1_2)
+summary(vaccdates_firstshot)
+
+summary(vaccdates_firstshot$vaccdate1_1)
+summary(vaccdates_firstshot$vaccdate1_2)
+
+demohist <- demohist %>% left_join(vaccdates_firstshot,by=c("study_id"="subject_id"))
+
+head(demohist[,c("study_id","vaccdate1_1","vaccdate1_2")])
+
+```
+serology data
+Identify subjects that seroconverted: did the screen result change from first timepoint to second timepoint?
+
+Categories:
+0 = No conversion: ab- at enrollment and remained ab- at repeat testing
+1 = Yes conversion: ab- at enrollment and then became ab+ at repeat testing
+2 = Reversion: ab+ at enrollment and changed to ab- at repeat testing
+3 = ab+ at enrollment and at repeat testing. We expect most ab+ at enrollment to remain ab+ at repeat testing.
+
+Also, sero.diff = Number of days between first blood collection (at enrollment) and 2nd collection.
+```{r serology}
+sero1 <- read.csv("../source_data/serology_results_latest.csv",stringsAsFactors=F)
+sero1 <- sero1 %>% filter(!is.na(subject_id)) %>%
+                select(subject_id, collection_date, screen_result, igg_titer,igm_titer) %>%
+                group_by(subject_id) %>%
+                mutate(serum1=min(as.Date(as.character(collection_date)))) %>%
+                mutate(serum2=max(as.Date(as.character(collection_date)))) %>%
+                mutate(sero_daydiff=as.numeric(serum2-serum1))%>%
+                mutate(seroconvert=NA)
+sero1$collection_date <- sero1$collection_date %>% as.Date(origin="1970-01-01")
+sero1 <- sero1 %>% arrange(as.numeric(subject_id),collection_date)
+sero1 <- sero1 %>% ungroup()
+
+sero1subjs <- sero1$subject_id %>% subset(duplicated(.)) %>% unique() %>% sort() # only people with more than one timepoint
+
+sero1subjstatus <- sero1subjs %>% sapply(function(x) {sero1 %>% filter(subject_id==x) %>% arrange(collection_date) %>% pull(screen_result) %>% head(2) %>% paste(collapse=" ")}) # head(2) = only take the first two timepoints, if for whatever reason there are more than 2
+
+names(sero1subjstatus) <- sero1subjs
+sero1$seroconvert[sero1$subject_id %in% (sero1subjstatus %>% subset(.=="Negative Negative") %>% names())] <- 0
+sero1$seroconvert[sero1$subject_id %in% (sero1subjstatus %>% subset(.=="Negative Positive") %>% names())] <- 1
+sero1$seroconvert[sero1$subject_id %in% (sero1subjstatus %>% subset(.=="Positive Negative") %>% names())] <- 2
+sero1$seroconvert[sero1$subject_id %in% (sero1subjstatus %>% subset(.=="Positive Positive") %>% names())] <- 3
+sero1$seroconvert[is.na(sero1$seroconvert)] <- 9
+sero1 <- sero1 %>% rename(ab_screen=screen_result,study_id=subject_id,date_visit=collection_date)
+
+sero1$igg_titer[sero1$igg_titer==""] <- "Negative"
+sero1$igm_titer[sero1$igm_titer==""] <- "Negative"
+sero1$igg_titer[sero1$igg_titer=="Neg"] <- "Negative"
+
+summary(sero1)
+# seroconvert can go to demohist
+seroconvert <- sero1 %>% select(study_id,seroconvert) %>% unique()
+seroconvert$study_id <- seroconvert$study_id %>% as.character()
+demohist <- demohist %>% left_join(seroconvert, by="study_id")
+```
+seropositivity at enrollment
+```{r seropositive at enrollment}
+allsubjs <- demohist$study_id %>% unique() %>% as.numeric() %>% sort() %>% as.character()
+allsubjsenrollmentdate <- allsubjs %>% lapply(function(x) {pcr_screen %>% filter(study_id==x & !grepl("driveby",redcap_event_name)) %>% pull(sample_date)}) # enrollment date here refers to first blood sampling, so weekly saliva samples are excluded
+
+allsubjsenrollmentdate <- allsubjsenrollmentdate %>% lapply(function(x) {if (length(x)>0) {min(x) %>% as.Date(origin="1970-01-01")} else {NA}}) # if a person never gave blood, they would get NA here instead of a date
+names(allsubjsenrollmentdate) <- allsubjs
+
+allsubjs_screenresult <- allsubjs  %>% lapply(function(x) {
+  if (!is.na(allsubjsenrollmentdate[[x]])) {
+    sero1 %>% filter(study_id==x & date_visit==allsubjsenrollmentdate[[x]]) %>% pull(ab_screen)
+  } else {
+    "never gave blood"
+  }
+})
+
+# if a person didn't give blood, they would get "never gave blood" here. If the serology at the enrollment date wasn't done, then selecting (ab_screen) would give character(0). 
+# In the next line that is converted to "unknown"
+
+allsubjs_screenresult <- allsubjs_screenresult %>% lapply(function(x) {if (length(x)==0) {"unknown"} else {x}})
+names(allsubjs_screenresult) <- allsubjs
+
+# need to check if serology was done on a close date, if not necessarily the first date
+unkserosubjs <- allsubjs %>% sapply(function(x) {allsubjs_screenresult[[x]]=="unknown"}) %>% subset(.==T) %>% names()
+unkserosubjs
+unkserosubjs %>% subset(. %in% sero1$study_id)
+
+# 484 didn't give blood on the first day, but did give blood on the second day, and no other - use this
+allsubjs_screenresult[["484"]] <- sero1 %>% filter(study_id==484) %>% pull(ab_screen)
+
+# enrollment date should be modified for those people who gave blood closer to the date of their first g-ii sample
+# determine whose blood got assayed more than once before follow-up
+
+# attach redcap event name to sample date
+
+sero2 <- sero1
+sero2$helper <- paste(sero2$study_id,sero2$date_visit)
+samplesevents <- allsamples %>% mutate(helper=paste(study_id,sample_date)) %>% select(helper,redcap_event_name) %>% filter(!grepl("driveby",redcap_event_name)) %>% unique()
+sero2 <- sero2 %>% left_join(samplesevents,by="helper")
+
+sero2a <- sero2 %>% filter(!grepl("ir",redcap_event_name))
+sero2asubjs <- sero2a$study_id %>% unique()
+sero2asubjcount <- sero2asubjs %>% sapply(function(x) {sero2a %>% filter(study_id==x) %>% nrow()})
+names(sero2asubjcount) <- sero2asubjs
+multibloodsubjs <- sero2asubjcount %>% subset(.>1) %>% names()
+multibloodscreenresults <- multibloodsubjs %>% sapply(function(x) {allsubjs_screenresult[[x]]})
+sero2a <- sero2 %>% filter((study_id %in% multibloodsubjs) & !grepl("ir",redcap_event_name))
+
+# subjs whose serology status upon repeated testing
+serochangesubjs <- multibloodsubjs %>% sapply(function(x) {sero2a %>% filter(study_id==x) %>% pull(ab_screen) %>% unique()}) %>% subset(lapply(.,length)>1) %>% names()
+
+# 255 is not standard because of multi shedding visits
+# 286 is a change
+
+allsubjs_screenresult[["286"]] <- "Positive"
+
+demohist$pos_enrollment <- demohist$study_id %>% sapply(function(x) {allsubjs_screenresult[[x]]})
+```
+merge in culture data from Stuart
+culture data is in "status"->"culture_status", can be positive or negative
+```{r merge culture data}
+culturelatest <- read.csv(file="../source_data/culture_results_merged_latest.csv",stringsAsFactors = F)
+culturelatest <- culturelatest %>% select(sample_id,subject_id,date_collect,sample_type,status) %>% rename(culture_status=status)
+
+# fix culturelatest sample types
+culturelatest$sample_type <- culturelatest$sample_type %>% gsub(" Derivative","",.)
+culturelatest$sample_type[culturelatest$sample_type=="G2 Fine Aerosol Wash"] <- "G-II Fine Aerosol"
+culturelatest$sample_type[culturelatest$sample_type=="G2 5-Micron Impactor"] <- "G-II Coarse Aerosol"
+culturelatest$sample_type[culturelatest$sample_type=="IcePac Sample"] <- "IcePac"
+
+# figure which culture samples went with masks
+mc1 <- masks_cough
+mc1$allcodes <- mc1[,c("fine_aero_barcode","fine_children","coarse_barcode","coarse_children","cone_barcode","cone_children")] %>% apply(1,function(x) {x %>% na.omit() %>% paste(collapse=";")})
+culturelatestmaskyn <- culturelatest$sample_id %>% sapply(function(x) {mc1 %>% filter(grepl(x,allcodes)) %>% pull(mask_yn)})
+culturelatest$maskyn <- culturelatestmaskyn %>% lapply(function(x) {if (length(x)!=0) {x} else {""}}) %>% unlist() # character(0) to text
+culturelatest$sample_type[culturelatest$maskyn=="1"] <- culturelatest$sample_type[culturelatest$maskyn=="1"] %>% paste0(" mask")
+
+# bind culturelatest by participant, day, and sample type
+culturelatest <- culturelatest %>% mutate(helper=paste(subject_id,date_collect,sample_type))
+
+qpcr_allsamples$sample_type[qpcr_allsamples$sample_type=="G-II Fine Aerosol Wash"] <- "G-II Fine Aerosol"
+qpcr_allsamples$sample_type[qpcr_allsamples$sample_type=="G-II Fine Aerosol Wash mask"] <- "G-II Fine Aerosol mask"
+qpcr_allsamples$sample_type[qpcr_allsamples$sample_type=="G-II 5-Micron Impactor"] <- "G-II Coarse Aerosol"
+qpcr_allsamples$sample_type[qpcr_allsamples$sample_type=="G-II 5-Micron Impactor mask"] <- "G-II Coarse Aerosol mask"
+qpcr_allsamples$sample_type[qpcr_allsamples$sample_type=="IcePac Sample"] <- "IcePac"
+
+culture_status_only <- culturelatest %>% select(culture_status,helper) %>% unique()
+culture_status_only$helper %>% subset(duplicated(.))
+# should be character(0)
+
+qpcr_allsamples <- qpcr_allsamples %>% mutate(helper=paste(study_id,sample_date,sample_type))
+qpcr_allsamples <- qpcr_allsamples %>% left_join(culture_status_only,by="helper")
+qpcr_allsamples$helper <- NULL
+qpcr_allsamples$culture_status[is.na(qpcr_allsamples$culture_status)] <- "not cultured"
+summary(qpcr_allsamples$culture_status %>% as.factor())
+```
+assign classes
+```{r class assignments}
+# what classes are supposed to be
+demohistclasses <- list()
+demohistclasses[["character"]] <- c("study_id","other_race","race","onset_from_sx_card","pos_enrollment","vacc_status")
+demohistclasses[["numeric"]] <- c("age_entry","alc_week","drinks_p_day","drinks_p_week","bmi",all_sx_ret,"ur_ret","lr_ret","sys_ret","gi_ret")
+demohistclasses[["factor"]] <- c("sex_birth","cigarette_ever","singing_lessons","singing_ensemble","latino","tag","taste_smell_yn_covid_ret","sx_med_care_ret","seroconvert")
+demohistclasses[["logical"]] <- c("cri","multiracial","fever_ever")
+demohistclasses[["Date"]] <- c("real_onset","vaccdate1_1","vaccdate1_2","date_of_enrollment")
+
+pcrscreenclasses <- list()
+pcrscreenclasses[["character"]] <- c("tac_id","study_id","redcap_event_name","redcap_repeat_instance","sample_id","sample_type")
+pcrscreenclasses[["Date"]] <- c("sample_date")
+pcrscreenclasses[["time"]]<- c("symptom_time")
+pcrscreenclasses[["numeric"]] <- c("ct_sgene_screen","ct_orf1ab_screen","ct_ngene_screen","oral_temp",ur_sx,lr_sx,gi_sx,sys_sx,"ur","lr","gi","sys","ox_sat","days_past_onset","ct_avg_screen")
+pcrscreenclasses[["factor"]] <- c("taste_smell_loss")
+pcrscreenclasses[["logical"]] <- c("fever_samp")
+
+qpcrclasses <- list()
+qpcrclasses[["character"]]<- c("study_id","exp_name","sample_id","sample_type")
+qpcrclasses[["numeric"]]<- c("ct_ngene_qpcr","ct_sgene_qpcr","ct_orfgene_qpcr","rxn_quant","sample_quant","cough_count","reserv_time","gii_reps","cens","av_quant","mdfy_sample_quant")
+qpcrclasses[["Date"]]<- c("sample_date","exp_date")
+qpcrclasses[["factor"]]<- c("gii_sessnum","mask_yn","mask_type","nd_lod_loq","gii","culture_status")
+qpcrclasses[["logical"]]<- c("S.gene.dropout","any_rep_lod1","all_rep_lod2","all_rep_loq","loq")
+
+sero1classes <- list()
+sero1classes[["character"]]<- c("study_id")
+sero1classes[["numeric"]]<- c("sero_daydiff")
+sero1classes[["Date"]]<- c("date_visit","serum1","serum2")
+sero1classes[["factor"]]<- c("igg_titer","igm_titer","seroconvert")
+sero1classes[["logical"]]<- c("ab_screen")
+
+# fix things here
+for (i in demohistclasses[["factor"]]) {
+  demohist[,i] <- demohist[,i] %>% as.factor()
+}
+demohistnumsublist <- c("alc_week","drinks_p_day","bmi")
+for (i in demohistnumsublist) {
+  demohist[,i] <- demohist[,i] %>% as.numeric()
+}
+demohist$cri <- demohist$cri %>% as.logical()
+demohist$multiracial[demohist$multiracial=="Yes"] <- "TRUE"
+demohist$multiracial[demohist$multiracial=="No"] <- "FALSE"
+demohist$multiracial <- demohist$multiracial %>% as.logical()
+
+pcr_screen$symptom_time <- pcr_screen$symptom_time %>% as.POSIXct(tz="America/New_York")
+pcr_screen$taste_smell_loss <- pcr_screen$taste_smell_loss %>% as.factor()
+pcr_screen$ox_sat <- pcr_screen$ox_sat %>% as.numeric()
+pcr_screen$fever_samp <- pcr_screen$fever_samp %>% as.logical()
+
+qpcr_allsamples$sample_date <- qpcr_allsamples$sample_date %>% as.Date(origin="1970-01-01")
+qpcr_allsamples$gii_sessnum <- qpcr_allsamples$gii_sessnum %>% as.factor()
+qpcr_allsamples$mask_yn <- qpcr_allsamples$mask_yn %>% as.factor()
+qpcr_allsamples$mask_type <- qpcr_allsamples$mask_type %>% as.factor()
+qpcr_allsamples$cough_count <- qpcr_allsamples$cough_count %>% as.numeric()
+qpcr_allsamples$reserv_time <- qpcr_allsamples$reserv_time %>% as.numeric()
+qpcr_allsamples$nd_lod_loq <- qpcr_allsamples$nd_lod_loq %>% as.factor()
+qpcr_allsamples$gii <- qpcr_allsamples$gii %>% as.factor()
+qpcr_allsamples$culture_status <- qpcr_allsamples$culture_status %>% as.factor()
+
+sero1 <- sero1 %>% as.data.frame()
+for (i in sero1classes[["factor"]]) {
+  sero1[,i] <- sero1[,i] %>% as.factor()
+}
+sero1$ab_screen[sero1$ab_screen=="Negative"] <- "FALSE"
+sero1$ab_screen[sero1$ab_screen=="Positive"] <- "TRUE"
+sero1$ab_screen <- sero1$ab_screen %>% as.logical()
+sero1$study_id <- sero1$study_id %>% as.character()
+```
+check classes of columns
+```{r check classes}
+demohistclassesassigned <- names(demohistclasses) %>% lapply(function(x) {rep(x,length(demohistclasses[[x]]))})
+for (i in 1:length(demohistclasses)) {
+  names(demohistclassesassigned[[i]]) <- demohistclasses[[i]]
+}
+demohistclassesassigned <- demohistclassesassigned %>% unlist()
+demohistclassesactual <- colnames(demohist) %>% sapply(function(x) {demohist[,x] %>% class()})
+
+pcrscreenclassesassigned <- names(pcrscreenclasses) %>% lapply(function(x) {rep(x,length(pcrscreenclasses[[x]]))})
+for (i in 1:length(pcrscreenclasses)) {
+  names(pcrscreenclassesassigned[[i]]) <- pcrscreenclasses[[i]]
+}
+pcrscreenclassesassigned <- pcrscreenclassesassigned %>% unlist()
+pcrscreenclassesactual <- colnames(pcr_screen) %>% sapply(function(x) {pcr_screen[,x] %>% class()})
+
+qpcrclassesassigned <- names(qpcrclasses) %>% lapply(function(x) {rep(x,length(qpcrclasses[[x]]))})
+for (i in 1:length(qpcrclasses)) {
+  names(qpcrclassesassigned[[i]]) <- qpcrclasses[[i]]
+}
+qpcrclassesassigned <- qpcrclassesassigned %>% unlist()
+qpcr_allsamples1 <- as.data.frame(qpcr_allsamples) # get around some tibble properties
+qpcrclassesactual <- colnames(qpcr_allsamples1) %>% sapply(function(x) {qpcr_allsamples1[,x] %>% class()})
+
+sero1classesassigned <- names(sero1classes) %>% lapply(function(x) {rep(x,length(sero1classes[[x]]))})
+for (i in 1:length(sero1classes)) {
+  names(sero1classesassigned[[i]]) <- sero1classes[[i]]
+}
+sero1classesassigned <- sero1classesassigned %>% unlist()
+sero1classesactual <- colnames(sero1) %>% sapply(function(x) {sero1[,x] %>% unlist() %>% class()})
+
+allclasses <- c("demohist","pcrscreen","qpcr","sero1")
+
+for (q in allclasses) {
+  assignedclasses <- eval(parse(text=paste0(q,"classesassigned")))
+  actuallist <- eval(parse(text=paste0(q,"classesactual")))
+  for (p in names(actuallist)) {
+    pactual <- actuallist[p] %>% gsub("integer","numeric",.)
+    if (pactual!=assignedclasses[p]) {
+      print(paste(q,":",p,actuallist[p],assignedclasses[p]))
+    }
+  }
+}
+#stop()
+```
+Write to directory the pcr plus covariables (merged) data
+Add a datestamp
+```{r write list of dataframes}
+cov_pcr_sera <- list(demohist,pcr_screen,qpcr_allsamples,sero1)
+names(cov_pcr_sera) <- c("demohist","pcr_screen","qpcr_allsamples","sero1")
+rdsfilename <- paste0("cov_pcr_sera_",Sys.Date() %>% format("%Y%m%d"),".RDS")
+saveRDS(cov_pcr_sera, file = rdsfilename)
+```

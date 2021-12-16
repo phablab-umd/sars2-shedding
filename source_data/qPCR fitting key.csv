@@ -1,0 +1,42 @@
+experiment,x_log_calc,fit_day_of,range_std3_low,range_std3_high
+20200623_2,multi1,Std3,1,8
+20200626_2,multi1,Std3,1,8
+20200629_1,multi1,Std3,1,8
+20200810_1,Std1 (direct),Std1 (direct),1,8
+20200815_1,Std1 (direct),Std1 (direct),1,8
+20200903_2,Std1 (2-6),Std3,1,8
+20200929_2,multi2,Std3,1,8
+20201010_1,multi2,Std3,1,8
+20201013_3,multi2,Std3,2,8
+20201028_2,multi2,Std3,2,8
+20201103_2,multi2,Std3,2,8
+20201106_1,multi2,Std3,2,8
+20201110_2,multi2,Std3,1,8
+20201119_2,multi2,Std3,2,8
+20201130_1,multi2,Std3,2,8
+20201203_2,multi2,Std3,2,8
+20201208_3,multi2,Std3,2,8
+20201210_1,multi2,Std3,1,8
+20201218_3,multi2,Std3,1,8
+20210106_3,multi2,Std3,1,8
+20210107_2,multi2,Std3,1,8
+20210121_2,Std1 (direct),Std1 (direct),2,8
+20210128_2,Std1 (direct),Std1 (direct),1,8
+20210209_3,Std1 (direct),Std1 (direct),1,8
+20210210_2,Std1 (direct),Std1 (direct),1,8
+20210216_3,multi3,Std3,2,8
+20210219_3,multi3,Std3,1,8
+20210224_3,multi3,Std3,1,8
+20210303_2,multi3,Std3,1,8
+20210326_2,multi3,Std3,1,8
+20210406_2,multi3,Std3,1,8
+20210408_2,multi3,Std3,1,8
+20210413_2,multi3,Std3,2,8
+20210416_2,multi3,Std3,1,8
+20210422_2,multi3,Std3,1,8
+20210428_2,multi3,Std3,2,8
+20210505_2,multi3,Std3,1,8
+20210511_3,multi3,Std3,1,8
+20210513_2,multi3,Std3,2,8
+20210520_2,multi3,Std3,1,8
+20210526_1,multi3,Std3,2,8

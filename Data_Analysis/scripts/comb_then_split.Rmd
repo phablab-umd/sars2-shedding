@@ -1,0 +1,194 @@
+---
+title: "comb_then_split"
+author: "Sanmi Adenaiye"
+date: "4/14/2021"
+output:
+  html_document: default
+---
+Generate datasets for prediction analyses and plots by combining qPCR replicate data with symptom and demographic data.
+
+These sets were developed for the nomask, paired, and nonpaired (combined nomask/yesmask) datasets as separate duplicate scripts. Later they were refined and then recombined into one script.
+
+Revision dates 6/3/21 by Sanmi Adenaiye and 7/6/21-7/10/21 by Filbert Hong
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+```
+demo_cols, pcr_cols, and sllseq, keysubjects with clade identification
+```{r}
+#columns needed in demohist for prediction
+demo_cols <- c("study_id","real_onset","pos_enrollment","bmi","age_entry","sex_birth","cigarette_ever")
+
+pcr_cols <- c("oral_temp",
+              "nose_run","nose_stuf","sneeze","throat_sr","earache","malaise","headache","mj_ache","sw_fever_chill","nausea",
+              "loa","vomit","diarrhea","chest_tight","sob","cough",
+              "ur","lr","gi","sys",
+              "taste_smell_loss","ox_sat","fever_samp","days_past_onset")
+
+allseqs <- read.csv(file="../../source_data/allseqs.csv",stringsAsFactors=F)
+keysubjects <- read.csv("../working_files/keysubjectsplus.csv",stringsAsFactors = F)
+```
+create keysubjects_varseq
+```{r}
+keysubjects_varseq <- keysubjects %>% left_join(allseqs,by="study_id") %>% select(study_id,clade,Pango.Lineage) %>% unique()
+keysubjects_varseq[is.na(keysubjects_varseq)] <- "undetermined"
+keysubjects_varseq$study_id <- keysubjects_varseq$study_id %>% as.character()
+```
+Import nomask data
+```{r}
+cov_pcr_sera_nomask_complete <- readRDS("../working_files/s1_datasets/s1_cov_pcr_sera_20210805_nomask_complete.RDS")
+demohist_nomask_complete <- cov_pcr_sera_nomask_complete[["demohist"]]
+pcr_screen_nomask_complete <- cov_pcr_sera_nomask_complete[["pcr_screen"]]
+sero1_nomask_complete <- cov_pcr_sera_nomask_complete[["sero1"]]
+qpcr_allsamples_nomask_complete <- cov_pcr_sera_nomask_complete[["qpcr_allsamples"]]
+
+pcr_dat_nomask <- qpcr_allsamples_nomask_complete # %>% select(all_of(vars))
+
+pcr_dat_nomask <- pcr_dat_nomask %>% left_join(demohist_nomask_complete %>% select(all_of(demo_cols)), by="study_id")
+pcr_dat_nomask <- pcr_dat_nomask %>% left_join(sero1_nomask_complete %>% select(study_id,serum1,serum2,sero_daydiff,seroconvert) %>% unique(),by="study_id")
+
+pcr_dat_nomask %>% group_by(sample_type) %>% summarise(subjects = length(unique(study_id)),samples = n())
+```
+# nomask_complete
+```{r}
+pcr_dat_nomask_complete <- pcr_dat_nomask
+```
+# yesmask_complete
+```{r}
+cov_pcr_sera_yesmask_complete <- readRDS("../working_files/s1_datasets/s1_cov_pcr_sera_20210805_yesmask_complete.RDS")
+demohist_yesmask_complete <- cov_pcr_sera_yesmask_complete[["demohist"]] 
+pcr_screen_yesmask_complete <- cov_pcr_sera_yesmask_complete[["pcr_screen"]]
+sero1_yesmask_complete <- cov_pcr_sera_yesmask_complete[["sero1"]]
+qpcr_allsamples_yesmask_complete <- cov_pcr_sera_yesmask_complete[["qpcr_allsamples"]]
+
+pcr_dat_yesmask_complete <- qpcr_allsamples_yesmask_complete # %>% select(vars)
+pcr_dat_yesmask_complete <- pcr_dat_yesmask_complete %>% left_join(demohist_yesmask_complete %>% select(all_of(demo_cols)), by="study_id")
+pcr_dat_yesmask_complete <- pcr_dat_yesmask_complete%>% left_join(sero1_yesmask_complete %>% select(study_id,serum1,serum2,sero_daydiff,seroconvert) %>% unique(),by="study_id")
+
+head(pcr_dat_yesmask_complete)
+```
+
+## Bind both yesmask and nomask to create the full nonpaired set
+```{r}
+# Simply binding yesmask and nomask and applying unique() gets rid of non-detect replicates that we want to keep.
+# Distinguish the replicates (by numbering them with repnum) to prevent this from happening.
+
+pcr_dat_nomask_complete <- pcr_dat_nomask_complete %>% arrange(study_id,sample_date,sample_id,sample_quant)
+pcr_dat_yesmask_complete <- pcr_dat_yesmask_complete %>% arrange(study_id,sample_date,sample_id,sample_quant)
+
+nomasksamples <- pcr_dat_nomask_complete$sample_id %>% unique()
+pcr_dat_nomask_complete$repnum <- NA
+for (i in nomasksamples) {
+  j <- pcr_dat_nomask_complete %>% filter(sample_id==i) %>% nrow()
+  pcr_dat_nomask_complete$repnum[which(pcr_dat_nomask_complete$sample_id==i)] <- c(1:j)
+}
+
+yesmasksamples <- pcr_dat_yesmask_complete$sample_id %>% unique()
+pcr_dat_yesmask_complete$repnum <- NA
+for (i in yesmasksamples) {
+  j <- pcr_dat_yesmask_complete %>% filter(sample_id==i) %>% nrow()
+  pcr_dat_yesmask_complete$repnum[which(pcr_dat_yesmask_complete$sample_id==i)] <- c(1:j)
+}
+
+pcr_dat_nonpaired <- pcr_dat_nomask_complete %>% bind_rows(pcr_dat_yesmask_complete) %>% unique()
+```
+
+```{r}
+demohist_nonpaired <- demohist_yesmask_complete %>% bind_rows(demohist_nomask_complete) %>% unique()
+demohist_nonpaired %>% group_by(pos_enrollment) %>% summarise(n=length(unique(study_id)))
+```
+## paired dataset
+```{r}
+cov_pcr_sera_paired_complete <- readRDS("../working_files/s1_datasets/s1_cov_pcr_sera_20210805_paired_complete.RDS")
+demohist_paired_complete <- cov_pcr_sera_paired_complete[["demohist"]]
+pcr_screen_paired_complete <- cov_pcr_sera_paired_complete[["pcr_screen"]]
+sero1_paired_complete <- cov_pcr_sera_paired_complete[["sero1"]]
+qpcr_allsamples_paired_complete <- cov_pcr_sera_paired_complete[["qpcr_allsamples"]]
+
+pcr_dat_paired <- qpcr_allsamples_paired_complete # %>% select(all_of(vars))
+pcr_dat_paired <- pcr_dat_paired %>% left_join(demohist_paired_complete %>% select(all_of(demo_cols)), by="study_id")
+pcr_dat_paired <- pcr_dat_paired %>% left_join(sero1_paired_complete %>% select(study_id,serum1,serum2,sero_daydiff,seroconvert) %>% unique(),by="study_id")
+
+pcr_dat_paired %>%
+  group_by(sample_type) %>%
+  summarise(subjects = length(unique(study_id)),
+            samples = n())
+```
+## add symptoms variable to dataframe
+nomask rpr and spr
+```{r}
+pcr_screen1 <- pcr_screen_nomask_complete %>% mutate(helpmerge=paste(study_id,sample_date))
+pcr_screen1 <- pcr_screen1 %>% select(all_of(pcr_cols),helpmerge) %>% distinct(helpmerge,.keep_all = T)
+
+pcr_sx_rpr_nomask <- pcr_dat_nomask %>% mutate(helpmerge=paste(study_id,sample_date))
+pcr_sx_rpr_nomask <- pcr_sx_rpr_nomask %>% left_join(pcr_screen1, by="helpmerge")
+
+# add lineage assignments
+pcr_sx_rpr_nomask <- pcr_sx_rpr_nomask %>% left_join(keysubjects_varseq,by="study_id")
+
+# sample per row
+pcr_sx_spr_nomask <- pcr_sx_rpr_nomask %>% distinct(sample_id,.keep_all = T) 
+
+# count number of replicates per sample type
+pcr_sx_rpr_nomask %>%
+  group_by(sample_type) %>%
+  summarize(replicates=n(),
+            subjects=length(unique(study_id)))
+```
+
+nonpaired rpr and spr
+```{r}
+# pcr_screen does not have replicate data so unique will work here
+pcr_screen <- pcr_screen_nomask_complete %>% bind_rows(pcr_screen_yesmask_complete) %>% unique()
+
+pcr_screen1 <- pcr_screen %>% mutate(helpmerge=paste(study_id,sample_date))
+pcr_screen1 <- pcr_screen1 %>% select(all_of(pcr_cols),helpmerge) %>% distinct(helpmerge,.keep_all = T)
+
+pcr_sx_rpr_nonpaired <- pcr_dat_nonpaired %>% mutate(helpmerge=paste(study_id,sample_date))
+pcr_sx_rpr_nonpaired <- pcr_sx_rpr_nonpaired %>% left_join(pcr_screen1, by="helpmerge")
+
+# add clade lineage assignments
+pcr_sx_rpr_nonpaired <- pcr_sx_rpr_nonpaired %>% left_join(keysubjects_varseq,by="study_id")
+
+# spr from rpr
+pcr_sx_spr_nonpaired <- pcr_sx_rpr_nonpaired %>% distinct(sample_id,.keep_all = T) 
+
+pcr_sx_rpr_nonpaired %>% group_by(sample_type) %>% summarize(replicates = n(), subjects =
+                                                     length(unique(study_id)))
+```
+
+paired rpr and spr
+```{r}
+pcr_screen1 <- pcr_screen_paired_complete %>% mutate(helpmerge=paste(study_id,sample_date))
+pcr_screen1 <- pcr_screen1 %>% select(all_of(pcr_cols),helpmerge) %>% distinct(helpmerge,.keep_all = T)
+
+pcr_sx_rpr_paired <- pcr_dat_paired %>% mutate(helpmerge=paste(study_id,sample_date))
+pcr_sx_rpr_paired <- pcr_sx_rpr_paired %>% left_join(pcr_screen1, by="helpmerge")
+
+# add lineage assignments
+pcr_sx_rpr_paired <- pcr_sx_rpr_paired %>% left_join(keysubjects_varseq,by="study_id")
+
+# sample per row
+pcr_sx_spr_paired <- pcr_sx_rpr_paired %>% distinct(sample_id,.keep_all = T) 
+
+#count number of replicates per sample type
+pcr_sx_rpr_paired %>%
+  group_by(sample_type) %>%
+  summarize(replicates=n(),
+            subjects=length(unique(study_id)))
+```
+
+write to files
+```{r}
+write.csv(pcr_sx_rpr_nomask,"../working_files/nomask_pcr_sx_rpr.csv")
+write.csv(pcr_sx_spr_nomask,"../working_files/nomask_pcr_sx_spr.csv")
+
+write.csv(pcr_sx_spr_nonpaired,"../working_files/nonpaired_pcr_sx_spr.csv")
+write.csv(pcr_sx_rpr_nonpaired,"../working_files/nonpaired_pcr_sx_rpr.csv")
+saveRDS(demohist_nonpaired,"../working_files/nonpaired_demohist.RDS")
+
+write.csv(pcr_sx_spr_paired,"../working_files/paired_pcr_sx_spr.csv")
+write.csv(pcr_sx_rpr_paired,"../working_files/paired_pcr_sx_rpr.csv")
+
+write.csv(keysubjects_varseq,file="../working_files/keysubjects_varseq.csv",row.names=F)
+```

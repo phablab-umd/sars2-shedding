@@ -1,0 +1,44 @@
+---
+title: "Comp_Table_2-Table_3_inputs"
+author: "Don Milton"
+date: "7/12/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Install some necessary packages
+```{r}
+
+library(tidyverse)
+rstudioapi::getActiveDocumentContext()$path
+```
+
+Read in data used in Table 2 and create summary used for numbers in table 2
+```{r}
+dF<-readRDS("../working_files/nonpaired/nonpaired_pcr_dat_negsero.RDS") 
+spr <- read.csv("../working_files/nomask/nomask_pred_negsero_spr.csv")
+tested_case_samp_df <- dF %>%
+  distinct(study_id, sample_date, sample_type) %>%
+  group_by(sample_type) %>%
+  summarize(
+    Cases = length(unique(study_id)),
+    `qPCR Samples` = n())
+```
+Read in data from spr used in Table 3 and create summary in same way as for Table 2.
+Then, print out both summaries.
+```{r}
+tested_case_samp_spr <- spr %>% 
+  distinct(study_id, sample_date, sample_type) %>%
+  group_by(sample_type) %>%
+  summarize(
+    Cases = length(unique(study_id)),
+    `qPCR Samples` = n())
+
+tested_case_samp_df
+tested_case_samp_spr
+```
+
+```

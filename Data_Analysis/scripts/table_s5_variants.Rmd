@@ -1,0 +1,73 @@
+---
+title: "table_variants_s5"
+author: "Filbert Hong"
+date: "7/14/2021"
+output: html_document
+---
+Summary table for variant data
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+```
+read files
+```{r read files}
+keysubjectsplus <- read.csv("../working_files/keysubjectsplus.csv",stringsAsFactors=F)
+allkeyseqs <- read.csv("../working_files/keysubjects_varseq.csv",stringsAsFactors=F)
+```
+keyseqs - eliminate all unsequenced, also pos_enrollment = unknown
+```{r merge}
+keyseqs <- keysubjectsplus %>% left_join(allkeyseqs %>% select(study_id,clade),by="study_id") %>% arrange(as.numeric(study_id))
+#keyseqs <- keyseqs %>% filter(!grepl("unknown|undetermined",clade))
+keyseqs <- keyseqs %>% filter(pos_enrollment!="unknown")
+keyseqs$clade[keyseqs$clade=="unknown"] <- "undetermined/unknown"
+keyseqs$clade[keyseqs$clade=="undetermined"] <- "undetermined/unknown"
+keyseqs$clade[grepl("Alpha",keyseqs$clade)] <- "Alpha"
+keyseqs$clade[grepl("Gamma",keyseqs$clade)] <- "Gamma"
+keyseqs$clade[grepl("Iota",keyseqs$clade)] <- "Iota"
+
+specificcladetypes <- c("Alpha","Gamma","Iota","undetermined/unknown")
+#specificcladetypes <- c("Alpha","Gamma","Iota")
+keyseqs$clade[!(keyseqs$clade %in% specificcladetypes)] <- "wild type or other"
+cladetypes <- c("wild type or other",specificcladetypes)
+
+#serotypes <- keyseqs$pos_enrollment %>% unique() %>% sort()
+serotypes <- c("Negative","Positive")
+```
+table
+```{r table}
+cladecounttotal <- cladetypes %>% sapply(function(x) {keyseqs %>% filter(clade==x) %>% nrow()})
+cladecountserotypes <- serotypes %>% sapply(function(y) {cladetypes %>% sapply(function(x) {keyseqs %>% filter(clade==x & pos_enrollment==y) %>% nrow()})}) %>% as.data.frame(stringsAsFactors=F)
+cladecountserotypes$total <- cladecounttotal
+cladecountserotypes$clade <- row.names(cladecountserotypes)
+
+cladecountserotypes <- cladecountserotypes %>% select(clade,all_of(serotypes),total)
+
+serotypesplus <- c(all_of(serotypes),"total")
+
+cladecountpercentages <- cladecountserotypes[,serotypesplus] %>% apply(2,function(x) {
+  x %>% as.numeric() %>% sapply(function(y) {
+    (100*(y/sum(as.numeric(x)))) %>% round(0)
+  })
+})
+
+cladecountformatted <- cladecountserotypes
+cladecountformatted[,serotypesplus] <- mapply(FUN=function(x,y) {paste0(x," (",y,")")},x=cladecountserotypes[,serotypesplus] %>% as.matrix(),cladecountpercentages) %>% matrix(ncol=length(serotypesplus)) %>% as.data.frame(stringsAsFactors=F) 
+
+cladecountformatted <- cladecountformatted %>% rename(Variant=clade,
+                                                      `Antibody negative at enrollment N (%)`=Negative,
+                                                      `Antibody positive at enrollment N (%)`=Positive,
+                                                      `Antibody positive and negative N (%)`=total)
+cladecountformatted[nrow(cladecountformatted)+1,] <- rep("",ncol(cladecountformatted))
+cladecountformatted[nrow(cladecountformatted)+1,] <- c("Total",
+                                                       cladecountserotypes %>% #filter(!grepl("unknown",clade)) %>% 
+                                                         select(all_of(serotypes),total) %>%
+                                                         apply(c(1,2),as.numeric) %>% apply(2,sum) %>%
+                                                         paste0(" (100)")
+                                                      )
+row.names(cladecountformatted) <- NULL
+knitr::kable(cladecountformatted)
+```
+
+```{r write file}
+write.csv(cladecountformatted,"../table_output/repo_table_s5_variants.csv",row.names=F)
+```

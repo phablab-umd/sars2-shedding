@@ -1,0 +1,132 @@
+---
+title: "paired_logistic"
+author: "Jianyu"
+date: "7/15/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#call for library
+```{r}
+library(tidyverse)
+library(lme4)
+```
+
+#Import dataset:
+```{r}
+paired_spr <- read.csv("../working_files/paired/paired_pred_negsero_spr.csv")
+paired_spr <- paired_spr %>% 
+                mutate(detect = factor(if_else(any_rep_lod1 == "TRUE", 1, 0)))
+summary(paired_spr$detect)
+
+
+paired_rpr <-  read.csv("../working_files/paired/paired_pred_negsero_rpr.csv")
+paired_rpr <- paired_rpr %>% 
+  mutate(detect = factor(if_else(sample_quant == 0, 0, 1)))
+
+```
+
+#Create fine_paired_spr/coarse_paired_spr/cone_paired_spr dataset for later analysis.
+```{r}
+######create fine_paired_spr subset
+fine_paired_spr <- paired_spr %>% 
+                filter(sample_type %in% c("G-II Fine Aerosol","G-II Fine Aerosol mask"))
+#check the data
+length(unique(fine_paired_spr$study_id))
+length(unique(fine_paired_spr$sample_id))
+
+######create coarse_paired_spr subset
+coarse_paired_spr <- paired_spr %>% 
+                filter(sample_type %in% c("G-II Coarse Aerosol", "G-II Coarse Aerosol mask"))
+#check the data
+length(unique(coarse_paired_spr$study_id))
+length(unique(coarse_paired_spr$sample_id))
+
+
+######create cone_paired_spr subset
+cone_paired_spr <- paired_spr %>% 
+                filter(sample_type %in% c("G-II Cone Swab", "G-II Cone Swab mask"))
+#check the data
+length(unique(cone_paired_spr$study_id))
+length(unique(cone_paired_spr$sample_id))
+```
+#Create fine_paired_rpr/coarse_paired_rpr/cone_paired_rpr dataset for later analysis.
+```{r}
+######create fine_paired_rpr subset
+fine_paired_rpr <- paired_rpr %>% 
+                filter(sample_type %in% c("G-II Fine Aerosol","G-II Fine Aerosol mask"))
+#check the data
+length(unique(fine_paired_rpr$study_id))
+length(unique(fine_paired_rpr$sample_id))
+
+######create coarse_paired_rpr subset
+coarse_paired_rpr <- paired_rpr %>% 
+                filter(sample_type %in% c("G-II Coarse Aerosol", "G-II Coarse Aerosol mask"))
+#check the data
+length(unique(coarse_paired_rpr$study_id))
+length(unique(coarse_paired_rpr$sample_id))
+
+
+######create cone_paired_rpr subset
+cone_paired_rpr <- paired_rpr %>% 
+                filter(sample_type %in% c("G-II Cone Swab", "G-II Cone Swab mask"))
+#check the data
+length(unique(cone_paired_rpr$study_id))
+length(unique(cone_paired_rpr$sample_id))
+```
+#using data from rpr
+```{r}
+print("fine_paired_rpr")
+lm <- glmer(detect ~ (1|study_id) + (1|study_id:sample_id) + cough + mask_yn, data = fine_paired_rpr, family = binomial)
+
+se <- sqrt(diag(vcov(lm)))
+(tab <- cbind(Est = fixef(lm), LL = fixef(lm) - 1.96 * se, UL = fixef(lm) + 1.96 *
+    se))
+exp(tab)
+
+print("coarse_paired_rpr")
+lm <- glmer(detect ~ (1|study_id) + (1|study_id:sample_id) + cough + mask_yn, data = coarse_paired_rpr, family = binomial)
+
+se <- sqrt(diag(vcov(lm)))
+(tab <- cbind(Est = fixef(lm), LL = fixef(lm) - 1.96 * se, UL = fixef(lm) + 1.96 *
+    se))
+exp(tab)
+
+print("cone_paired_rpr")
+lm <- glmer(detect ~ (1|study_id) + (1|study_id:sample_id) + cough + mask_yn, data = cone_paired_rpr, family = binomial)
+
+se <- sqrt(diag(vcov(lm)))
+(tab <- cbind(Est = fixef(lm), LL = fixef(lm) - 1.96 * se, UL = fixef(lm) + 1.96 *
+    se))
+exp(tab)
+```
+
+#using data from spr
+```{r}
+print("fine_paired_spr")
+lm <- glmer(detect ~ (1|study_id) + cough + mask_yn, data = fine_paired_spr, family = binomial)
+
+se <- sqrt(diag(vcov(lm)))
+(tab <- cbind(Est = fixef(lm), LL = fixef(lm) - 1.96 * se, UL = fixef(lm) + 1.96 *
+    se))
+exp(tab)
+
+print("coarse_paired_spr")
+lm <- glmer(detect ~ (1|study_id) + cough + mask_yn, data = coarse_paired_spr, family = binomial)
+
+se <- sqrt(diag(vcov(lm)))
+(tab <- cbind(Est = fixef(lm), LL = fixef(lm) - 1.96 * se, UL = fixef(lm) + 1.96 *
+    se))
+exp(tab)
+
+print("cone_paired_spr")
+lm <- glmer(detect ~ (1|study_id) + cough + mask_yn, data = cone_paired_spr, family = binomial)
+
+se <- sqrt(diag(vcov(lm)))
+(tab <- cbind(Est = fixef(lm), LL = fixef(lm) - 1.96 * se, UL = fixef(lm) + 1.96 *
+    se))
+exp(tab)
+```

@@ -1,0 +1,44 @@
+---
+title: "manu_results_culture_yesmask_dates.Rmd"
+author: "Filbert Hong"
+date: "7/22/2021"
+output: html_document
+---
+Two (3%) of the 66 fine aerosol samples collected from participants while wearing face masks were culture positive, including one from a person infected with an alpha variant on day X post onset and one from a person with a nextstrain clade Z  virus on day Y post onset.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+```
+
+```{r}
+cov_pcr_sera <- readRDS("../working_files/s1_datasets/s1_cov_pcr_sera_20210805_yesmask_complete.RDS")
+seqclades <- read.csv("../../source_data/allseqs.csv",stringsAsFactors = F)
+
+qpcr <- cov_pcr_sera$qpcr_allsamples
+
+qpcrcultpos <- qpcr %>% filter(culture_status=="positive" & grepl("mask",sample_type))
+cultpos_sid <- qpcrcultpos$study_id %>% unique() %>% sort()
+cultpos_sid
+
+cultpos_sampledates <- cultpos_sid %>% sapply(function(x) {qpcrcultpos %>% filter(study_id==x) %>% pull(sample_date) %>% unique()})
+cultpos_sampledates
+
+cultpos_clades <- cultpos_sid %>% sapply(function(x) {seqclades %>% filter(study_id==x) %>% pull(clade)})
+cultpos_clades
+
+cultpos_realonset <- cultpos_sid %>% sapply(function(x) {cov_pcr_sera$demohist %>% filter(study_id==x) %>% pull(real_onset)})
+
+cultpos_dpo <- cultpos_sampledates - cultpos_realonset
+
+alphasid <- cultpos_clades %>% subset(grepl("alpha",tolower(.))) %>% names()
+nonalphasid <- cultpos_sid %>% subset(.!=alphasid)
+
+x_text <- cultpos_dpo[alphasid]
+y_text <- cultpos_dpo[nonalphasid]
+z_text <- cultpos_clades[nonalphasid]
+
+textoutput <- paste0("Two (3%) of the 66 fine aerosol samples collected from participants while wearing face masks were culture positive, including one from a person infected with an alpha variant on day ",x_text," post onset and one from a person with a nextstrain clade ",z_text," virus on day ",y_text," post onset.")
+
+write(textoutput,"../table_output/manu_results_culture_yesmask_dates.txt")
+```

@@ -1,0 +1,428 @@
+---
+title: "cov_pcr_sera_subsets"
+author: "Filbert Hong"
+date: "4/21/2021"
+output: html_document
+---
+Subset cov_pcr_sera for participants with complete masked and/or nonmasked sample sets
+
+1. All available data
+2. Complete quantitative PCR for samples from the visit: mid-turbinate swabs, saliva, phone swab, coarse, and fine aerosol
+Some salivas had no qPCR run on them because their screening result was nondetect. Impute missing samples
+3. Complete quantitatuve PCR and complete culture for all samples from the visit.
+
+```{r setup, include=FALSE}
+library(dplyr)
+```
+
+For dataset 1, filter qPCR_allsamples to exclude masked samples. Filter pcr_screen to exclude visits that don't have any unmasked sessions.
+```{r read files}
+allsamples <- read.csv("../source_data/StopCOVIDsamples.csv",colClasses = "character") %>% select(study_id, sample_type, sample_id, date_collected_sg) %>%
+                rename(sample_date=date_collected_sg)
+cov_pcr_sera <- readRDS("cov_pcr_sera_20210805.RDS")
+# fix allsamples sample type names
+allsamples$sample_type <- allsamples$sample_type %>% gsub(" Derivative","",.)
+allsamples$sample_type[allsamples$sample_type=="G2 Fine Aerosol Wash"] <- "G-II Fine Aerosol"
+allsamples$sample_type[allsamples$sample_type=="G2 5-Micron Impactor"] <- "G-II Coarse Aerosol"
+allsamples$sample_type[allsamples$sample_type=="IcePac Sample"] <- "IcePac"
+allsamples$helper <- allsamples$study_id %>% paste(allsamples$sample_date)
+```
+subset into mask and nomask
+use person-sampledate helpers
+```{r mask and nomask}
+cov_pcr_sera[["qpcr_allsamples"]] <- cov_pcr_sera[["qpcr_allsamples"]] %>% mutate(helper=paste(study_id,sample_date))
+cov_pcr_sera[["pcr_screen"]] <- cov_pcr_sera[["pcr_screen"]] %>% mutate(helper=paste(study_id,sample_date))
+visit_helpers_all <- cov_pcr_sera[["qpcr_allsamples"]] %>% pull(helper) %>% unique()
+print(paste0("cov_pcr_sera qpcr helpers: ",cov_pcr_sera[["qpcr_allsamples"]]$helper %>% unique() %>% length()))
+print("cov_pcr_sera rows:")
+cov_pcr_sera %>% sapply(nrow)
+
+# identify mask and nomask helpers based on qpcr_allsamples
+# remove screening PCR visits from cov_pcr_sera_nomask$pcr_screen that aren't on the nomask visit list
+# a lot of them go away because many of the pcr_screen results are driveby salivas from arm 1
+# remove demohist and sero subject IDs that aren't in qpcr_allsamples$study_id for each respective set
+
+visit_helpers_nomask <- cov_pcr_sera[["qpcr_allsamples"]] %>% filter(mask_yn==0) %>% pull(helper) %>% unique()
+visit_helpers_yesmask <- cov_pcr_sera[["qpcr_allsamples"]] %>% filter(mask_yn==1) %>% pull(helper) %>% unique()
+
+cov_pcr_sera_nomask <- cov_pcr_sera
+cov_pcr_sera_nomask[["qpcr_allsamples"]] <- cov_pcr_sera_nomask[["qpcr_allsamples"]] %>% filter(helper %in% visit_helpers_nomask) %>% filter(mask_yn!=1)
+cov_pcr_sera_nomask[["pcr_screen"]] <- cov_pcr_sera_nomask[["pcr_screen"]] %>% filter(helper %in% visit_helpers_nomask)
+cov_pcr_sera_nomask[["demohist"]] <- cov_pcr_sera_nomask[["demohist"]] %>% filter(study_id %in% cov_pcr_sera_nomask[["qpcr_allsamples"]]$study_id)
+cov_pcr_sera_nomask[["sero1"]] <- cov_pcr_sera_nomask[["sero1"]] %>% filter(study_id %in% cov_pcr_sera_nomask[["qpcr_allsamples"]]$study_id)
+print(paste0("cov_pcr_sera_nomask qpcr helpers: ",cov_pcr_sera_nomask[["qpcr_allsamples"]]$helper %>% unique() %>% length()))
+print("cov_pcr_sera_nomask rows:")
+cov_pcr_sera_nomask %>% sapply(nrow)
+
+cov_pcr_sera_yesmask <- cov_pcr_sera
+cov_pcr_sera_yesmask[["qpcr_allsamples"]] <- cov_pcr_sera_yesmask[["qpcr_allsamples"]] %>% filter(helper %in% visit_helpers_yesmask) %>% filter(mask_yn!=0)
+cov_pcr_sera_yesmask[["pcr_screen"]] <- cov_pcr_sera_yesmask[["pcr_screen"]] %>% filter(helper %in% visit_helpers_yesmask)
+cov_pcr_sera_yesmask[["demohist"]] <- cov_pcr_sera_yesmask[["demohist"]] %>% filter(study_id %in% cov_pcr_sera_yesmask[["qpcr_allsamples"]]$study_id)
+cov_pcr_sera_yesmask[["sero1"]] <- cov_pcr_sera_yesmask[["sero1"]] %>% filter(study_id %in% cov_pcr_sera_yesmask[["qpcr_allsamples"]]$study_id)
+print(paste0("cov_pcr_sera_yesmask qpcr helpers: ",cov_pcr_sera_yesmask[["qpcr_allsamples"]]$helper %>% unique() %>% length()))
+print("cov_pcr_sera_yesmask rows:")
+cov_pcr_sera_yesmask %>% sapply(nrow)
+
+excluded_helpers <- visit_helpers_all %>% subset(!(. %in% c(visit_helpers_nomask,visit_helpers_yesmask))) 
+# There are person-days for which the samples were quantitated, but they didn't go into the G-II that day. (like subject 56 on 6/6, a contact initial). Those are excluded.
+```
+For dataset 2, make sure visits with Saliva, MT, G-II Fine and Coarse Aerosol, Cone Swab, and Phone are present. 
+
+For nomask.
+
+- some visits were done before Cone Swab procedure was implemented. Make sure these visits aren't excluded
+- some salivas had no qPCR run on them because their screening result was nondetect. Impute these as rxn_quant=0.
+- 274 2020-10-01 saliva was accidentally discarded in between screening and quantitation. Impute this one as rxn_quant=estimated from pcr_screen cts via an average of all std3fits.
+```{r complete qPCR set for nomask}
+cov_pcr_sera_nomask_complete <- cov_pcr_sera_nomask
+
+visit_helpers_nomask_sampletypes <- visit_helpers_nomask %>% lapply(function(x) {cov_pcr_sera_nomask_complete[["qpcr_allsamples"]] %>% filter(helper==x) %>% select(sample_type) %>% unlist() %>% unique()}) # what samples are in which visit
+names(visit_helpers_nomask_sampletypes) <- visit_helpers_nomask
+
+fullset1nomask <- c("Saliva","G-II Coarse Aerosol","G-II Fine Aerosol","Phone Swab","Midturbinate Swab","G-II Cone Swab") # the ideal full set
+fullset1anomask <- c("Saliva","G-II Coarse Aerosol","G-II Fine Aerosol","Phone Swab","Midturbinate Swab") # for comparison if the G-II cone was missing
+fullset2nomask <- c("G-II Coarse Aerosol","G-II Fine Aerosol","Phone Swab","Midturbinate Swab") # for comparison if the saliva was missing
+
+visit_helpers_nomask_fullset1 <- visit_helpers_nomask_sampletypes %>% subset(lapply(.,function(x) {all(fullset1nomask %in% x)}) %>% unlist()) %>% names() # these are the sets that have full sets
+fullset1ahelpers_nomask <- visit_helpers_nomask_sampletypes %>% subset(lapply(.,function(x) {all(fullset1anomask %in% x)}) %>% unlist()) %>% names() # these are the sets that would otherwise be complete except for the Cone Swab
+missingconeswab_nomask <- fullset1ahelpers_nomask %>% subset(!(. %in% visit_helpers_nomask_fullset1)) # these sets are the ones who are missing the coneswab
+missingconeswabdoesntexist_nomask <- missingconeswab_nomask %>% sapply(function(x) {allsamples %>% filter(helper==x & grepl("cone",tolower(sample_type))) %>% nrow() %>% `==`(0)}) %>% names()
+visit_helpers_nomask_fullset1 <- c(visit_helpers_nomask_fullset1,missingconeswabdoesntexist_nomask) # add these helpers back
+
+visit_helpers_nomask_incompl <- visit_helpers_nomask %>% subset(!(. %in% visit_helpers_nomask_fullset1))
+
+cov_pcr_sera_nomask_complete[["qpcr_allsamples"]]$saliva_missing_after_screen <- NA
+
+possiblyincomplete_due_to_saliva_nomask <- visit_helpers_nomask_incompl %>% subset(visit_helpers_nomask_sampletypes[.] %>% sapply(function(x) {all(fullset2nomask %in% x)})) # which ones are missing saliva
+incomplete_dueto_saliva_nomask <- possiblyincomplete_due_to_saliva_nomask %>% subset(possiblyincomplete_due_to_saliva_nomask %>% sapply(function(x) {cov_pcr_sera_nomask_complete[["pcr_screen"]] %>% filter(helper==x & grepl("saliva",tolower(sample_type))) %>% select(ct_sgene_screen,ct_ngene_screen,ct_orf1ab_screen) %>% unlist() %>% `==`(c(40,40,40)) %>% all()})) # which ones have saliva nondetects at screening
+incomplete_nomask <- visit_helpers_nomask_incompl %>% subset(!(. %in% incomplete_dueto_saliva_nomask))
+  
+cov_pcr_sera_nomask_complete[["qpcr_allsamples"]]$saliva_missing_after_screen[cov_pcr_sera_nomask_complete[["qpcr_allsamples"]]$helper %in% incomplete_dueto_saliva_nomask] <- T
+
+# manually impute missing salivas
+impute_nomask_helpers <- c(incomplete_dueto_saliva_nomask)
+impute_nomask_df <- matrix(ncol=ncol(cov_pcr_sera_nomask_complete[["qpcr_allsamples"]]),nrow=length(impute_nomask_helpers)) %>% as.data.frame(stringsAsFactors=F)
+colnames(impute_nomask_df) <- colnames(cov_pcr_sera_nomask_complete[["qpcr_allsamples"]])
+impute_nomask_df$helper <- impute_nomask_helpers
+impute_nomask_df$ct_ngene_qpcr <- -1
+impute_nomask_df$ct_sgene_qpcr <- -1
+impute_nomask_df$ct_orfgene_qpcr <- -1
+impute_nomask_df$nd_lod_loq <- 0
+impute_nomask_df$cens <-  1 # used to be logical, now numeric; cens 1 means sample_quant is 0
+impute_nomask_df$rxn_quant <- 0
+impute_nomask_df$sample_quant <- 0
+impute_nomask_df$mdfy_sample_quant <- 75
+impute_nomask_df$any_rep_lod1 <- F
+impute_nomask_df$all_rep_lod2 <- F
+impute_nomask_df$all_rep_loq <- F
+impute_nomask_df$av_quant <- 0
+impute_nomask_df$loq <- F
+impute_nomask_df$S.gene.dropout <- T # yes, this is true for the particular study IDs in this list
+
+# manually impute 274 2020-10-01
+helper27420201001 <- c("274 2020-10-01")
+names(helper27420201001) <- "helper"
+impute_nomask_df <- impute_nomask_df %>% bind_rows(helper27420201001)
+impute_nomask_df$ct_ngene_qpcr[impute_nomask_df$helper=="274 2020-10-01"] <- cov_pcr_sera_nomask[["pcr_screen"]] %>% filter(helper=="274 2020-10-01") %>% pull(ct_ngene_screen)
+impute_nomask_df$ct_sgene_qpcr[impute_nomask_df$helper=="274 2020-10-01"] <- cov_pcr_sera_nomask[["pcr_screen"]] %>% filter(helper=="274 2020-10-01") %>% pull(ct_sgene_screen)
+impute_nomask_df$ct_orfgene_qpcr[impute_nomask_df$helper=="274 2020-10-01"] <- cov_pcr_sera_nomask[["pcr_screen"]] %>% filter(helper=="274 2020-10-01") %>% pull(ct_orf1ab_screen)
+# estimate the sample_quant from ct_ngene_qpcr, average of fits
+std3_allfits <- read.csv(file="../source_data/std3_allfits.csv",stringsAsFactors=F)
+std3_allfits$est_rxn_quant <- ((impute_nomask_df$ct_ngene_qpcr[impute_nomask_df$helper=="274 2020-10-01"]-std3_allfits$b)/std3_allfits$m) %>% `^`(10,.)
+impute_nomask_df$rxn_quant[impute_nomask_df$helper=="274 2020-10-01"] <- std3_allfits$est_rxn_quant %>% mean()
+impute_nomask_df$sample_quant[impute_nomask_df$helper=="274 2020-10-01"] <- impute_nomask_df$rxn_quant[impute_nomask_df$helper=="274 2020-10-01"] * (125/6)
+impute_nomask_df$nd_lod_loq[impute_nomask_df$helper=="274 2020-10-01"] <- 2
+impute_nomask_df$cens[impute_nomask_df$helper=="274 2020-10-01"] <-  0 # used to be logical, now numerical; cens 0 means sample_quant >0
+
+impute_nomask_df$any_rep_lod1[impute_nomask_df$helper=="274 2020-10-01"]  <- T
+impute_nomask_df$all_rep_lod2[impute_nomask_df$helper=="274 2020-10-01"]  <- T
+impute_nomask_df$all_rep_loq[impute_nomask_df$helper=="274 2020-10-01"]  <- T
+impute_nomask_df$av_quant[impute_nomask_df$helper=="274 2020-10-01"]  <- impute_nomask_df$sample_quant[impute_nomask_df$helper=="274 2020-10-01"]
+impute_nomask_df$mdfy_sample_quant[impute_nomask_df$helper=="274 2020-10-01"]  <- impute_nomask_df$sample_quant[impute_nomask_df$helper=="274 2020-10-01"]
+impute_nomask_df$loq[impute_nomask_df$helper=="274 2020-10-01"]  <- T
+impute_nomask_df$S.gene.dropout[impute_nomask_df$helper=="274 2020-10-01"]  <- F # this is not an S-gene dropout
+
+impute_nomask_df$study_id <- impute_nomask_df$helper %>% strsplit(" ") %>% lapply(head,1) %>% unlist()
+impute_nomask_df$sample_date <- impute_nomask_df$helper %>% strsplit(" ") %>% lapply(tail,1) %>% unlist() %>% as.Date(origin="1970-01-01")
+impute_nomask_df$sample_id <- c(1:nrow(impute_nomask_df)) %>% paste0("imputed_saliva_nomask_",.)
+impute_nomask_df$exp_name <- "imputed saliva row"
+impute_nomask_df$sample_type <- "Saliva"
+impute_nomask_df$culture_status <- "imputed sample"
+impute_nomask_df$exp_date <- impute_nomask_df$sample_date
+impute_nomask_df$gii_sessnum <- "not a G-II sample"
+impute_nomask_df$mask_yn <- "not a G-II sample"
+impute_nomask_df$mask_type <- "not a G-II sample"
+impute_nomask_df$cough_count <-  -999
+impute_nomask_df$reserv_time <- -999
+impute_nomask_df$gii <- 0 %>% as.factor()
+impute_nomask_df$gii_reps <- impute_nomask_df$helper %>% sapply(function(x) {cov_pcr_sera_nomask_complete[["qpcr_allsamples"]] %>% filter(helper==x) %>% pull(gii_reps) %>% unique()})
+impute_nomask_df$nd_lod_loq <- impute_nomask_df$nd_lod_loq %>% as.factor()
+impute_nomask_df$saliva_missing_after_screen <-  T
+
+cov_pcr_sera_nomask_complete[["qpcr_allsamples"]] <- cov_pcr_sera_nomask_complete[["qpcr_allsamples"]] %>% filter((helper %in% visit_helpers_nomask_fullset1) | (saliva_missing_after_screen) | helper=="274 2020-10-01")
+cov_pcr_sera_nomask_complete[["qpcr_allsamples"]] <- cov_pcr_sera_nomask_complete[["qpcr_allsamples"]] %>% bind_rows(impute_nomask_df)
+
+helpers1 <- cov_pcr_sera_nomask_complete[["qpcr_allsamples"]]$helper %>% unique() %>% sort()
+if (all(visit_helpers_nomask %in% cov_pcr_sera_nomask_complete[["qpcr_allsamples"]]$helper)) {
+  print("all nomask sets are considered quantitated")
+} else {
+  helpers2 <- visit_helpers_nomask %>% subset(!(. %in% cov_pcr_sera_nomask_complete[["qpcr_allsamples"]]$helper))
+  cat(paste0("The following sets are incomplete:\n",helpers2 %>% paste(collapse="\n"),"\n"))
+  for (i in 1:length(helpers2)) {
+    j <- visit_helpers_nomask_sampletypes[helpers2[i]] %>% unlist()
+    notj <- fullset1nomask %>% subset(!(. %in% j))
+    cat(paste0(helpers2[i]," has ",j %>% paste(collapse=";"),"; but it's missing ",notj %>% paste(collapse = ",")))
+  }
+}
+
+# now that cov_pcr_sera_nomask_complete[["qpcr_allsamples"]] has subsetted samples, filter demo1 and sero1 to exclude subjects that are missing, and filter pcr_screen to exclude visits that are not in qpcr_allsamples
+cov_pcr_sera_nomask_complete[["qpcr_allsamples"]]$saliva_missing_after_screen[is.na(cov_pcr_sera_nomask_complete[["qpcr_allsamples"]]$saliva_missing_after_screen)] <- F
+
+cov_pcr_sera_nomask_complete[["demohist"]] <- cov_pcr_sera_nomask_complete[["demohist"]] %>% filter(study_id %in% cov_pcr_sera_nomask_complete[["qpcr_allsamples"]]$study_id)
+cov_pcr_sera_nomask_complete[["sero1"]] <- cov_pcr_sera_nomask_complete[["sero1"]] %>% filter(study_id %in% cov_pcr_sera_nomask_complete[["qpcr_allsamples"]]$study_id)
+cov_pcr_sera_nomask_complete[["pcr_screen"]] <- cov_pcr_sera_nomask_complete[["pcr_screen"]] %>% filter(helper %in% cov_pcr_sera_nomask_complete[["qpcr_allsamples"]]$helper)
+print(paste0("cov_pcr_sera_nomask_complete qpcr helpers: ",cov_pcr_sera_nomask_complete[["qpcr_allsamples"]]$helper %>% unique() %>% length()))
+print("cov_pcr_sera_nomask_complete rows:")
+cov_pcr_sera_nomask_complete %>% sapply(nrow)
+```
+complete sets for yesmask
+```{r complete qPCR set for yesmask}
+cov_pcr_sera_yesmask_complete <- cov_pcr_sera_yesmask
+
+visit_helpers_yesmask_sampletypes <- visit_helpers_yesmask %>% lapply(function(x) {cov_pcr_sera_yesmask_complete[["qpcr_allsamples"]] %>% filter(helper==x) %>% select(sample_type) %>% unlist() %>% unique()}) # what samples are in which visit
+names(visit_helpers_yesmask_sampletypes) <- visit_helpers_yesmask
+
+fullset1yesmask <- c("Saliva","G-II Coarse Aerosol mask","G-II Fine Aerosol mask","Phone Swab","Midturbinate Swab","G-II Cone Swab mask") # the ideal full set
+fullset1ayesmask <- c("Saliva","G-II Coarse Aerosol mask","G-II Fine Aerosol mask","Phone Swab","Midturbinate Swab") # for comparison if the G-II cone was missing
+fullset2yesmask <- c("G-II Coarse Aerosol mask","G-II Fine Aerosol mask","Phone Swab","Midturbinate Swab") # for comparison if the saliva was missing
+
+visit_helpers_yesmask_fullset1 <- visit_helpers_yesmask_sampletypes %>% subset(lapply(.,function(x) {all(fullset1yesmask %in% x)}) %>% unlist()) %>% names() # these are the sets that have full sets
+fullset1ahelpers_yesmask <- visit_helpers_yesmask_sampletypes %>% subset(lapply(.,function(x) {all(fullset1ayesmask %in% x)}) %>% unlist()) %>% names() # these are the sets that would otherwise be complete except for the Cone Swab
+missingconeswab_yesmask <- fullset1ahelpers_yesmask %>% subset(!(. %in% visit_helpers_yesmask_fullset1)) # these sets are the ones who are missing the coneswab
+missingconeswabdoesntexist_yesmask <- missingconeswab_yesmask %>% sapply(function(x) {allsamples %>% filter(helper==x & grepl("cone",tolower(sample_type))) %>% nrow() %>% `==`(0)}) %>% names()
+visit_helpers_yesmask_fullset1 <- c(visit_helpers_yesmask_fullset1,missingconeswabdoesntexist_yesmask) # add these helpers back
+
+visit_helpers_yesmask_incompl <- visit_helpers_yesmask %>% subset(!(. %in% visit_helpers_yesmask_fullset1))
+
+cov_pcr_sera_yesmask_complete[["qpcr_allsamples"]]$saliva_missing_after_screen <- NA
+
+possiblyincomplete_due_to_saliva_yesmask <- visit_helpers_yesmask_incompl %>% subset(visit_helpers_yesmask_sampletypes[.] %>% sapply(function(x) {all(fullset2yesmask %in% x)})) # which ones are missing saliva
+incomplete_dueto_saliva_yesmask <- possiblyincomplete_due_to_saliva_yesmask %>% subset(possiblyincomplete_due_to_saliva_yesmask %>% sapply(function(x) {cov_pcr_sera_yesmask_complete[["pcr_screen"]] %>% filter(helper==x & grepl("saliva",tolower(sample_type))) %>% select(ct_sgene_screen,ct_ngene_screen,ct_orf1ab_screen) %>% unlist() %>% `==`(c(40,40,40)) %>% all()})) # which ones have saliva nondetects at screening
+incomplete_yesmask <- visit_helpers_yesmask_incompl %>% subset(!(. %in% incomplete_dueto_saliva_yesmask))
+  
+cov_pcr_sera_yesmask_complete[["qpcr_allsamples"]]$saliva_missing_after_screen[cov_pcr_sera_yesmask_complete[["qpcr_allsamples"]]$helper %in% incomplete_dueto_saliva_yesmask] <- T
+
+# impute missing saliva samples
+impute_yesmask_helpers <- c(incomplete_dueto_saliva_yesmask)
+impute_yesmask_df <- matrix(ncol=ncol(cov_pcr_sera_yesmask_complete[["qpcr_allsamples"]]),nrow=length(impute_yesmask_helpers)) %>% as.data.frame(stringsAsFactors=F)
+colnames(impute_yesmask_df) <- colnames(cov_pcr_sera_yesmask_complete[["qpcr_allsamples"]])
+impute_yesmask_df$helper <- impute_yesmask_helpers
+impute_yesmask_df$study_id <- impute_yesmask_df$helper %>% strsplit(" ") %>% lapply(head,1) %>% unlist()
+impute_yesmask_df$sample_date <- impute_yesmask_df$helper %>% strsplit(" ") %>% lapply(tail,1) %>% unlist() %>% as.Date(origin="1970-01-01")
+impute_yesmask_df$sample_id <- c(1:nrow(impute_yesmask_df)) %>% paste0("imputed_saliva_yesmask_",.)
+impute_yesmask_df$exp_name <- "imputed saliva row"
+impute_yesmask_df$sample_type <- "Saliva"
+impute_yesmask_df$ct_ngene_qpcr <- -1
+impute_yesmask_df$ct_sgene_qpcr <- -1
+impute_yesmask_df$ct_orfgene_qpcr <- -1
+impute_yesmask_df$rxn_quant <- 0
+impute_yesmask_df$sample_quant <- 0
+impute_yesmask_df$culture_status <- "imputed sample"
+impute_yesmask_df$exp_date <- impute_yesmask_df$sample_date
+impute_yesmask_df$gii_sessnum <- "not a G-II sample"
+impute_yesmask_df$mask_yn <- "not a G-II sample"
+impute_yesmask_df$mask_type <- "not a G-II sample"
+impute_yesmask_df$cough_count <-  -999
+impute_yesmask_df$reserv_time <- -999
+
+impute_yesmask_df$nd_lod_loq <- 0
+impute_yesmask_df$cens <-  1 # used to be logical, now numeric; cens 1 means sample_quant is 0
+impute_yesmask_df$rxn_quant <- 0
+impute_yesmask_df$sample_quant <- 0
+impute_yesmask_df$mdfy_sample_quant <- 75
+impute_yesmask_df$any_rep_lod1 <- F
+impute_yesmask_df$all_rep_lod2 <- F
+impute_yesmask_df$all_rep_loq <- F
+impute_yesmask_df$av_quant <- 0
+impute_yesmask_df$loq <- F
+impute_yesmask_df$S.gene.dropout <- T # yes, this is true for the particular study IDs in this list
+
+impute_yesmask_df$nd_lod_loq <- 0 %>% as.factor()
+impute_yesmask_df$gii <- 0 %>% as.factor()
+impute_yesmask_df$gii_reps <- impute_yesmask_df$helper %>% sapply(function(x) {cov_pcr_sera_yesmask_complete[["qpcr_allsamples"]] %>% filter(helper==x) %>% pull(gii_reps) %>% unique()})
+impute_yesmask_df$saliva_missing_after_screen <-  T
+
+# bring over 274 2020-10-01 from impute_nomask_df
+impute_274_2020_10_01 <- impute_nomask_df %>% filter(helper=="274 2020-10-01")
+impute_yesmask_df <- impute_yesmask_df %>% bind_rows(impute_274_2020_10_01)
+
+cov_pcr_sera_yesmask_complete[["qpcr_allsamples"]] <- cov_pcr_sera_yesmask_complete[["qpcr_allsamples"]] %>% filter((helper %in% visit_helpers_yesmask_fullset1) | (saliva_missing_after_screen) | helper=="274 2020-10-01")
+cov_pcr_sera_yesmask_complete[["qpcr_allsamples"]] <- cov_pcr_sera_yesmask_complete[["qpcr_allsamples"]] %>% bind_rows(impute_yesmask_df)
+
+helpers1 <- cov_pcr_sera_yesmask_complete[["qpcr_allsamples"]]$helper %>% unique() %>% sort()
+if (all(visit_helpers_yesmask %in% cov_pcr_sera_yesmask_complete[["qpcr_allsamples"]]$helper)) {
+  print("all yesmask sets are considered quantitated")
+} else {
+  helpers2 <- visit_helpers_yesmask %>% subset(!(. %in% cov_pcr_sera_yesmask_complete[["qpcr_allsamples"]]$helper))
+  cat(paste0("The following sets are incomplete:\n",helpers2 %>% paste(collapse="\n"),"\n"))
+  for (i in 1:length(helpers2)) {
+    j <- visit_helpers_yesmask_sampletypes[helpers2[i]] %>% unlist()
+    notj <- fullset1yesmask %>% subset(!(. %in% j))
+    cat(paste0(helpers2[i]," has ",j %>% paste(collapse=";"),"; but it's missing ",notj %>% paste(collapse = ",")))
+  }
+}
+
+# now that cov_pcr_sera_yesmask_complete[["qpcr_allsamples"]] has reduced samples, filter demo1 and sero1 to exclude subjects that are missing, and filter pcr_screen to exclude visits that are not in qpcr_allsamples
+cov_pcr_sera_yesmask_complete[["qpcr_allsamples"]]$saliva_missing_after_screen[is.na(cov_pcr_sera_yesmask_complete[["qpcr_allsamples"]]$saliva_missing_after_screen)] <- F
+
+cov_pcr_sera_yesmask_complete[["demohist"]] <- cov_pcr_sera_yesmask_complete[["demohist"]] %>% filter(study_id %in% cov_pcr_sera_yesmask_complete[["qpcr_allsamples"]]$study_id)
+cov_pcr_sera_yesmask_complete[["sero1"]] <- cov_pcr_sera_yesmask_complete[["sero1"]] %>% filter(study_id %in% cov_pcr_sera_yesmask_complete[["qpcr_allsamples"]]$study_id)
+cov_pcr_sera_yesmask_complete[["pcr_screen"]] <- cov_pcr_sera_yesmask_complete[["pcr_screen"]] %>% filter(helper %in% cov_pcr_sera_yesmask_complete[["qpcr_allsamples"]]$helper)
+print(paste0("cov_pcr_sera_yesmask_complete qpcr helpers: ",cov_pcr_sera_yesmask_complete[["qpcr_allsamples"]]$helper %>% unique() %>% length()))
+print("cov_pcr_sera_yesmask_complete rows:")
+cov_pcr_sera_yesmask_complete %>% sapply(nrow)
+```
+
+For dataset 3, take dataset 2 and exclude visits for which any cultures for positive sample_quant have not been run
+```{r complete qPCR+culture set for nomask}
+cov_pcr_sera_nomask_complete_culture <- cov_pcr_sera_nomask_complete
+#qpcr_nomask_culture <- qpcr_nomask
+fullset2anomask <- c("G-II Coarse Aerosol","G-II Fine Aerosol","Phone Swab","Midturbinate Swab","G-II Cone Swab")
+visit_helpers_notcultured_nomask <- cov_pcr_sera_nomask_complete_culture[["qpcr_allsamples"]] %>% filter((sample_type %in% fullset2anomask) & culture_status=="not cultured") %>% pull(helper) %>% unique()
+cov_pcr_sera_nomask_complete_culture[["qpcr_allsamples"]] <- cov_pcr_sera_nomask_complete_culture[["qpcr_allsamples"]] %>% filter(!(helper %in% visit_helpers_notcultured_nomask))
+qpcr_nomask_notcultured <- cov_pcr_sera_nomask_complete[["qpcr_allsamples"]] %>% filter(helper %in% visit_helpers_notcultured_nomask)
+
+# which helper groups in nomask (all) have breath samples greater than zero
+poshelpers_nomask <- cov_pcr_sera_nomask[["qpcr_allsamples"]] %>% filter(rxn_quant>0 & grepl("G-II",sample_type)) %>% select(helper) %>% unlist() %>% unique() %>% sort()
+cat(paste0(length(poshelpers_nomask)," groups that have rxn_quant>0 in G-II types"))
+posculturecompletehelpers_nomask <- cov_pcr_sera_nomask_complete_culture[["qpcr_allsamples"]]$helper %>% unique() %>% sort() %>% subset(. %in% poshelpers_nomask)
+cat(paste0(length(posculturecompletehelpers_nomask)," of these have culture complete"))
+poscultureincompletehelpers_nomask <-poshelpers_nomask %>% subset(!(. %in% posculturecompletehelpers_nomask))
+cat(paste0(length(poscultureincompletehelpers_nomask)," of these have culture incomplete"))
+
+listofnotcultured_nomask <- cov_pcr_sera_nomask[["qpcr_allsamples"]] %>% filter((helper %in% poscultureincompletehelpers_nomask) & (culture_status=="not cultured") & (sample_type %in% fullset2anomask))
+listofnotcultured_nomask <- listofnotcultured_nomask %>% select(study_id,sample_date,sample_type) %>% unique() %>% arrange(study_id,sample_date,sample_type)
+write.csv(listofnotcultured_nomask,paste0("incomplete_culture_toship_nomask_",Sys.Date() %>% format("%Y%m%d"),".csv"),row.names=F) # this list does not pick up cone swabs
+
+cov_pcr_sera_nomask_complete_culture[["demohist"]] <- cov_pcr_sera_nomask_complete_culture[["demohist"]] %>% filter(study_id %in% cov_pcr_sera_nomask_complete_culture[["qpcr_allsamples"]]$study_id)
+cov_pcr_sera_nomask_complete_culture[["sero1"]] <- cov_pcr_sera_nomask_complete_culture[["sero1"]] %>% filter(study_id %in% cov_pcr_sera_nomask_complete_culture[["qpcr_allsamples"]]$study_id)
+cov_pcr_sera_nomask_complete_culture[["pcr_screen"]] <- cov_pcr_sera_nomask_complete_culture[["pcr_screen"]] %>% filter(helper %in% cov_pcr_sera_nomask_complete_culture[["qpcr_allsamples"]]$helper)
+print(paste0("cov_pcr_sera_nomask_complete_culture qpcr helpers: ",cov_pcr_sera_nomask_complete_culture[["qpcr_allsamples"]]$helper %>% unique() %>% length()))
+print("cov_pcr_sera_nomask_complete_culture rows:")
+cov_pcr_sera_nomask_complete_culture %>% sapply(nrow)
+```
+culture sets for yes masked samples
+```{r complete qPCR+culture set for yesmask}
+cov_pcr_sera_yesmask_complete_culture <- cov_pcr_sera_yesmask_complete
+#qpcr_yesmask_culture <- qpcr_yesmask
+fullset2ayesmask <- c("G-II Coarse Aerosol mask","G-II Fine Aerosol mask","Phone Swab","Midturbinate Swab","G-II Cone Swab mask")
+visit_helpers_notcultured_yesmask <- cov_pcr_sera_yesmask_complete_culture[["qpcr_allsamples"]] %>% filter((sample_type %in% fullset2ayesmask) & culture_status=="not cultured") %>% pull(helper) %>% unique()
+cov_pcr_sera_yesmask_complete_culture[["qpcr_allsamples"]] <- cov_pcr_sera_yesmask_complete_culture[["qpcr_allsamples"]] %>% filter(!(helper %in% visit_helpers_notcultured_yesmask))
+qpcr_yesmask_notcultured <- cov_pcr_sera_yesmask_complete[["qpcr_allsamples"]] %>% filter(helper %in% visit_helpers_notcultured_yesmask)
+
+# which helper groups in yesmask (all) have breath samples greater than zero
+poshelpers_yesmask <- cov_pcr_sera_yesmask[["qpcr_allsamples"]] %>% filter(rxn_quant>0 & grepl("G-II",sample_type)) %>% select(helper) %>% unlist() %>% unique() %>% sort()
+cat(paste0(length(poshelpers_yesmask)," groups that have rxn_quant>0 in G-II types"))
+posculturecompletehelpers_yesmask <- cov_pcr_sera_yesmask_complete_culture[["qpcr_allsamples"]]$helper %>% unique() %>% sort() %>% subset(. %in% poshelpers_yesmask)
+cat(paste0(length(posculturecompletehelpers_yesmask)," of these have culture complete"))
+poscultureincompletehelpers_yesmask <-poshelpers_yesmask %>% subset(!(. %in% posculturecompletehelpers_yesmask))
+cat(paste0(length(poscultureincompletehelpers_yesmask)," of these have culture incomplete"))
+
+listofnotculturedyesmask <- cov_pcr_sera_yesmask[["qpcr_allsamples"]] %>% filter((helper %in% poscultureincompletehelpers_yesmask) & (culture_status=="not cultured") & (sample_type %in% fullset2ayesmask))
+listofnotculturedyesmask <- listofnotculturedyesmask %>% select(study_id,sample_date,sample_type) %>% unique() %>% arrange(study_id,sample_date,sample_type)
+write.csv(listofnotculturedyesmask,paste0("incomplete_culture_toship_yesmask_",Sys.Date() %>% format("%Y%m%d"),".csv"),row.names=F)
+
+cov_pcr_sera_yesmask_complete_culture[["demohist"]] <- cov_pcr_sera_yesmask_complete_culture[["demohist"]] %>% filter(study_id %in% cov_pcr_sera_yesmask_complete_culture[["qpcr_allsamples"]]$study_id)
+cov_pcr_sera_yesmask_complete_culture[["sero1"]] <- cov_pcr_sera_yesmask_complete_culture[["sero1"]] %>% filter(study_id %in% cov_pcr_sera_yesmask_complete_culture[["qpcr_allsamples"]]$study_id)
+cov_pcr_sera_yesmask_complete_culture[["pcr_screen"]] <- cov_pcr_sera_yesmask_complete_culture[["pcr_screen"]] %>% filter(helper %in% cov_pcr_sera_yesmask_complete_culture[["qpcr_allsamples"]]$helper)
+print(paste0("cov_pcr_sera_yesmask_complete_culture qpcr helpers: ",cov_pcr_sera_yesmask_complete_culture[["qpcr_allsamples"]]$helper %>% unique() %>% length()))
+print("cov_pcr_sera_yesmask_complete_culture rows:")
+cov_pcr_sera_yesmask_complete_culture %>% sapply(nrow)
+```
+create a new set cov_pcr_sera_paired, with complete qpcr and complete culture
+```{r paired sets}
+paired_helpers <- intersect(visit_helpers_nomask,visit_helpers_yesmask)
+
+# cov_pcr_sera_paired is cov_pcr_sera where helpers are restricted to days where there are masked and unmasked samples
+cov_pcr_sera_paired <- cov_pcr_sera
+cov_pcr_sera_paired[["qpcr_allsamples"]] <- cov_pcr_sera_paired[["qpcr_allsamples"]] %>% filter(helper %in% paired_helpers)
+cov_pcr_sera_paired[["demohist"]] <- cov_pcr_sera_paired[["demohist"]] %>% filter(study_id %in% cov_pcr_sera_paired[["qpcr_allsamples"]]$study_id)
+cov_pcr_sera_paired[["sero1"]] <- cov_pcr_sera_paired[["sero1"]] %>% filter(study_id %in% cov_pcr_sera_paired[["qpcr_allsamples"]]$study_id)
+cov_pcr_sera_paired[["pcr_screen"]] <- cov_pcr_sera_paired[["pcr_screen"]] %>% filter(study_id %in% cov_pcr_sera_paired[["qpcr_allsamples"]]$study_id)
+print(paste0("cov_pcr_sera_paired qpcr helpers: ",cov_pcr_sera_paired[["qpcr_allsamples"]]$helper %>% unique() %>% length()))
+print("cov_pcr_sera_paired rows:")
+cov_pcr_sera_paired %>% sapply(nrow)
+
+# cov_pcr_sera_paired_complete is cov_pcr_sera_paired restricted to person-days with complete qpcr sets for both masked and unmasked sets
+
+paired_helpers_fullqpcr <- intersect(cov_pcr_sera_nomask_complete[["qpcr_allsamples"]]$helper,cov_pcr_sera_yesmask_complete[["qpcr_allsamples"]]$helper) %>% unique()
+
+cov_pcr_sera_paired_complete <- cov_pcr_sera_paired
+cov_pcr_sera_paired_complete[["qpcr_allsamples"]] <- cov_pcr_sera_paired_complete[["qpcr_allsamples"]] %>% filter(helper %in% paired_helpers_fullqpcr)
+
+impute_paired_df <- bind_rows(impute_nomask_df,impute_yesmask_df) %>% distinct(helper,.keep_all = T) # imputation for the yesmask and nomask sets was duplicated, as they're salivas
+
+cov_pcr_sera_paired_complete[["qpcr_allsamples"]] <- cov_pcr_sera_paired_complete[["qpcr_allsamples"]] %>% bind_rows(impute_paired_df)
+
+cov_pcr_sera_paired_complete[["demohist"]] <- cov_pcr_sera_paired_complete[["demohist"]] %>% filter(study_id %in% cov_pcr_sera_paired_complete[["qpcr_allsamples"]]$study_id)
+cov_pcr_sera_paired_complete[["sero1"]] <- cov_pcr_sera_paired_complete[["sero1"]] %>% filter(study_id %in% cov_pcr_sera_paired_complete[["qpcr_allsamples"]]$study_id)
+cov_pcr_sera_paired_complete[["pcr_screen"]] <- cov_pcr_sera_paired_complete[["pcr_screen"]] %>% filter(study_id %in% cov_pcr_sera_paired_complete[["qpcr_allsamples"]]$study_id)
+print(paste0("cov_pcr_sera_paired_complete qpcr helpers: ",cov_pcr_sera_paired_complete[["qpcr_allsamples"]]$helper %>% unique() %>% length()))
+print("cov_pcr_sera_paired_complete rows:")
+cov_pcr_sera_paired_complete %>% sapply(nrow)
+
+# cov_pcr_sera_paired_complete_culture
+cov_pcr_sera_paired_complete_culture <- cov_pcr_sera_paired_complete
+fullsampletypesetforpairedculture <- c("Phone Swab","Midturbinate Swab",
+                                       "G-II Coarse Aerosol","G-II Fine Aerosol","G-II Cone Swab",
+                                       "G-II Coarse Aerosol mask","G-II Fine Aerosol mask","G-II Cone Swab mask")
+visit_helpers_notcultured_paired <- cov_pcr_sera_paired_complete_culture[["qpcr_allsamples"]] %>% filter((sample_type %in% fullsampletypesetforpairedculture) & culture_status=="not cultured") %>% pull(helper) %>% unique()
+cov_pcr_sera_paired_complete_culture[["qpcr_allsamples"]] <- cov_pcr_sera_paired_complete_culture[["qpcr_allsamples"]] %>% filter(!(helper %in% visit_helpers_notcultured_paired))
+qpcr_paired_notcultured <- cov_pcr_sera_paired_complete[["qpcr_allsamples"]] %>% filter(helper %in% visit_helpers_notcultured_paired)
+
+cov_pcr_sera_paired_complete_culture[["demohist"]] <- cov_pcr_sera_paired_complete_culture[["demohist"]] %>% filter(study_id %in% cov_pcr_sera_paired_complete_culture[["qpcr_allsamples"]]$study_id)
+cov_pcr_sera_paired_complete_culture[["sero1"]] <- cov_pcr_sera_paired_complete_culture[["sero1"]] %>% filter(study_id %in% cov_pcr_sera_paired_complete_culture[["qpcr_allsamples"]]$study_id)
+cov_pcr_sera_paired_complete_culture[["pcr_screen"]] <- cov_pcr_sera_paired_complete_culture[["pcr_screen"]] %>% filter(study_id %in% cov_pcr_sera_paired_complete_culture[["qpcr_allsamples"]]$study_id)
+print(paste0("cov_pcr_sera_paired_complete_culture qpcr helpers: ",cov_pcr_sera_paired_complete_culture[["qpcr_allsamples"]]$helper %>% unique() %>% length()))
+print("cov_pcr_sera_paired_complete_culture rows:")
+cov_pcr_sera_paired_complete_culture %>% sapply(nrow)
+```
+clean up and write
+```{r write files}
+cov_pcr_sera_nomask[["qpcr_allsamples"]]$helper <- NULL
+cov_pcr_sera_nomask[["pcr_screen"]]$helper <- NULL
+cov_pcr_sera_nomask_complete[["qpcr_allsamples"]]$helper <- NULL
+cov_pcr_sera_nomask_complete[["pcr_screen"]]$helper <- NULL
+cov_pcr_sera_nomask_complete_culture[["qpcr_allsamples"]]$helper <- NULL
+cov_pcr_sera_nomask_complete_culture[["pcr_screen"]]$helper <- NULL
+
+cov_pcr_sera_yesmask[["qpcr_allsamples"]]$helper <- NULL
+cov_pcr_sera_yesmask[["pcr_screen"]]$helper <- NULL
+cov_pcr_sera_yesmask_complete[["qpcr_allsamples"]]$helper <- NULL
+cov_pcr_sera_yesmask_complete[["pcr_screen"]]$helper <- NULL
+cov_pcr_sera_yesmask_complete_culture[["qpcr_allsamples"]]$helper <- NULL
+cov_pcr_sera_yesmask_complete_culture[["pcr_screen"]]$helper <- NULL
+
+cov_pcr_sera_paired[["qpcr_allsamples"]]$helper <- NULL
+cov_pcr_sera_paired[["pcr_screen"]]$helper <- NULL
+cov_pcr_sera_paired_complete[["qpcr_allsamples"]]$helper <- NULL
+cov_pcr_sera_paired_complete[["pcr_screen"]]$helper <- NULL
+cov_pcr_sera_paired_complete_culture[["qpcr_allsamples"]]$helper <- NULL
+cov_pcr_sera_paired_complete_culture[["pcr_screen"]]$helper <- NULL
+
+nomask <- list(cov_pcr_sera_nomask,cov_pcr_sera_nomask_complete,cov_pcr_sera_nomask_complete_culture)
+names(nomask) <- c("cov_pcr_sera_nomask","cov_pcr_sera_nomask_complete","cov_pcr_sera_nomask_complete_culture")
+yesmask <- list(cov_pcr_sera_yesmask,cov_pcr_sera_yesmask_complete,cov_pcr_sera_yesmask_complete_culture)
+names(yesmask) <- c("cov_pcr_sera_yesmask","cov_pcr_sera_yesmask_complete","cov_pcr_sera_yesmask_complete_culture")
+paired <- list(cov_pcr_sera_paired,cov_pcr_sera_paired_complete,cov_pcr_sera_paired_complete_culture)
+names(paired) <- c("cov_pcr_sera_paired","cov_pcr_sera_paired_complete","cov_pcr_sera_paired_complete_culture")
+
+objectstowrite <- "cov_pcr_sera_" %>% paste0(c("nomask","yesmask","paired")) %>% lapply(paste0,c("","_complete","_complete_culture")) %>% unlist()
+filenamestowrite <- "cov_pcr_sera_" %>% paste0(Sys.Date() %>% format("%Y%m%d"),"_") %>% paste0(c("nomask","yesmask","paired")) %>% lapply(paste0,c("","_complete","_complete_culture")) %>% unlist() %>% paste0(".RDS")
+
+for (i in 1:length(objectstowrite)) {
+  j <- eval(parse(text=objectstowrite[i]))
+  saveRDS(j,file = filenamestowrite[i])
+}
+```
+

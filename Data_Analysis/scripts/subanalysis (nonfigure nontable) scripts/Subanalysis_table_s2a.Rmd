@@ -1,0 +1,287 @@
+---
+title: "Fixed fine and coarse"
+author: "Jianyu"
+date: "7/20/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(dplyr)
+#library(stringr)
+#library(readr)
+library(tidyverse)
+#library(lubridate)
+library(forcats)
+library(lmec)
+library(kableExtra)
+library(lme4)
+source("z_create_matrix.R")
+```
+
+#### All samples
+#import data
+```{r}
+dF<-readRDS("../working_files/nonpaired/nonpaired_pcr_dat_negsero.RDS") 
+dF <- dF %>%  mutate(mdfy_sample_quant = if_else(cens==1, 75, mdfy_sample_quant)) 
+pcr_dat_clean<-dF %>% mutate(ln_final_copies=log(mdfy_sample_quant))
+pcrdatclean_sampletypes <- pcr_dat_clean$sample_type %>% unique()
+
+sarslist <- pcrdatclean_sampletypes %>% lapply(function(x) {pcr_dat_clean %>% filter(sample_type==x)})
+names(sarslist) <- pcrdatclean_sampletypes
+```
+
+###GM and GSD for G-II Fine Aerosol
+
+####using lmer
+```{r}
+lmer_fine <- lmer (ln_final_copies ~ (1|study_id) + (1|study_id:sample_date) , data=sarslist[["G-II Fine Aerosol"]])
+summary(lmer_fine)
+
+
+beta_fine <- fixef(lmer_fine)
+sigma_fine <- sqrt(diag(vcov(lmer_fine)))
+low_ci_fold_inc <- signif(exp(beta_fine - 1.96*(sigma_fine)), 2)
+up_ci_fold_inc <- signif(exp(beta_fine + 1.96*(sigma_fine)), 2)
+fold_inc <- signif(exp(beta_fine), 2)
+fold_inc_var_fine <- cbind("intercept", fold_inc, low_ci_fold_inc, up_ci_fold_inc)
+fold_inc_var_fine  
+```
+
+####using lmec
+```{r}
+sarsdataset <- sarslist[["G-II Fine Aerosol"]]
+  Z_current <- z_create_matrix(sarsdataset)
+  X <- matrix(rep(1, length(sarsdataset$ln_final_copies)), ncol=1) #for intercept only
+  cluster <- as.numeric(as.factor(sarsdataset$study_id))
+ fit_ML <- lmec(yL = sarsdataset$ln_final_copies,
+                  cens = sarsdataset$cens,
+                  X = X, 
+                  Z = Z_current,
+                  cluster=cluster,
+                  method='ML',
+                  maxstep=200)
+beta <- fit_ML$beta[1]
+sigma <- sqrt(fit_ML$varFix[1])
+low_ci_fold_inc <- signif(exp(beta - 1.96*(sigma)), 2)
+up_ci_fold_inc <- signif(exp(beta + 1.96*(sigma)), 2)
+fold_inc <- signif(exp(beta), 2)
+fold_inc_var <- cbind(var, fold_inc, low_ci_fold_inc, up_ci_fold_inc)
+fold_inc_var
+```
+
+###GM and GSD for G-II Fine Aerosol with mask
+####using lmec
+###MLmcmc
+```{r}
+sarsdataset <- sarslist[["G-II Fine Aerosol mask"]]
+  Z_current <- z_create_matrix(sarsdataset)
+  X <- matrix(rep(1, length(sarsdataset$ln_final_copies)), ncol=1) #for intercept only
+  cluster <- as.numeric(as.factor(sarsdataset$study_id))
+ fit_ML <- lmec(yL = sarsdataset$ln_final_copies,
+                  cens = sarsdataset$cens,
+                  X = X, 
+                  Z = Z_current,
+                  cluster=cluster,
+                  method='ML',
+                  maxstep=200)
+beta <- fit_ML$beta[1]
+sigma <- sqrt(fit_ML$varFix[1])
+low_ci_fold_inc <- signif(exp(beta - 1.96*(sigma)), 2)
+up_ci_fold_inc <- signif(exp(beta + 1.96*(sigma)), 2)
+fold_inc <- signif(exp(beta), 2)
+fold_inc_var <- cbind(var, fold_inc, low_ci_fold_inc, up_ci_fold_inc)
+fold_inc_var
+```
+
+###GM and GSD for G-II Coarse Aerosol
+
+####using lmer
+```{r}
+lmer <- lmer (ln_final_copies ~ (1|study_id) + (1|study_id:sample_date) , data=sarslist[["G-II Coarse Aerosol"]])
+summary(lmer)
+
+
+beta <- fixef(lmer)
+sigma <- sqrt(diag(vcov(lmer)))
+low_ci_fold_inc <- signif(exp(beta - 1.96*(sigma)), 2)
+up_ci_fold_inc <- signif(exp(beta + 1.96*(sigma)), 2)
+fold_inc <- signif(exp(beta), 2)
+fold_inc_var <- cbind("intercept", fold_inc, low_ci_fold_inc, up_ci_fold_inc)
+fold_inc_var  
+```
+
+####using lmec
+```{r}
+sarsdataset <- sarslist[["G-II Coarse Aerosol"]]
+  Z_current <- z_create_matrix(sarsdataset)
+  X <- matrix(rep(1, length(sarsdataset$ln_final_copies)), ncol=1) #for intercept only
+  cluster <- as.numeric(as.factor(sarsdataset$study_id))
+ fit_ML <- lmec(yL = sarsdataset$ln_final_copies,
+                  cens = sarsdataset$cens,
+                  X = X, 
+                  Z = Z_current,
+                  cluster=cluster,
+                  method='ML',
+                  maxstep=200)
+beta <- fit_ML$beta[1]
+sigma <- sqrt(fit_ML$varFix[1])
+low_ci_fold_inc <- signif(exp(beta - 1.96*(sigma)), 2)
+up_ci_fold_inc <- signif(exp(beta + 1.96*(sigma)), 2)
+fold_inc <- signif(exp(beta), 2)
+fold_inc_var <- cbind(var, fold_inc, low_ci_fold_inc, up_ci_fold_inc)
+fold_inc_var
+```
+
+
+#### Other variants
+#import data
+```{r}
+dF_other <- pcr_dat_clean %>% filter(s_gen_pos_id == "TRUE")
+
+pcrdatclean_sampletypes <- dF_other$sample_type %>% unique()
+
+sarslist_other <- pcrdatclean_sampletypes %>% lapply(function(x) {dF_other %>% filter(sample_type==x)})
+names(sarslist_other) <- pcrdatclean_sampletypes
+```
+
+###GM and GSD for G-II Fine Aerosol
+
+####using lmer
+```{r}
+lmer_fine <- lmer (ln_final_copies ~ (1|study_id) + (1|study_id:sample_date) , data=sarslist_other[["G-II Fine Aerosol"]])
+summary(lmer_fine)
+
+
+beta_fine <- fixef(lmer_fine)
+sigma_fine <- sqrt(diag(vcov(lmer_fine)))
+low_ci_fold_inc <- signif(exp(beta_fine - 1.96*(sigma_fine)), 2)
+up_ci_fold_inc <- signif(exp(beta_fine + 1.96*(sigma_fine)), 2)
+fold_inc <- signif(exp(beta_fine), 2)
+fold_inc_var_fine <- cbind("intercept", fold_inc, low_ci_fold_inc, up_ci_fold_inc)
+fold_inc_var_fine  
+```
+####using lmec
+```{r}
+sarsdataset <- sarslist_other[["G-II Fine Aerosol"]]
+  Z_current <- z_create_matrix(sarsdataset)
+  X <- matrix(rep(1, length(sarsdataset$ln_final_copies)), ncol=1) #for intercept only
+  cluster <- as.numeric(as.factor(sarsdataset$study_id))
+ fit_ML <- lmec(yL = sarsdataset$ln_final_copies,
+                  cens = sarsdataset$cens,
+                  X = X, 
+                  Z = Z_current,
+                  cluster=cluster,
+                  method='ML',
+                  maxstep=200)
+beta <- fit_ML$beta[1]
+sigma <- sqrt(fit_ML$varFix[1])
+low_ci_fold_inc <- signif(exp(beta - 1.96*(sigma)), 2)
+up_ci_fold_inc <- signif(exp(beta + 1.96*(sigma)), 2)
+fold_inc <- signif(exp(beta), 2)
+fold_inc_var <- cbind(var, fold_inc, low_ci_fold_inc, up_ci_fold_inc)
+fold_inc_var
+```
+
+###GM and GSD for G-II Fine Aerosol mask
+####using lmec
+```{r}
+sarsdataset <- sarslist_other[["G-II Fine Aerosol mask"]]
+  Z_current <- z_create_matrix(sarsdataset)
+  X <- matrix(rep(1, length(sarsdataset$ln_final_copies)), ncol=1) #for intercept only
+  cluster <- as.numeric(as.factor(sarsdataset$study_id))
+ fit_ML <- lmec(yL = sarsdataset$ln_final_copies,
+                  cens = sarsdataset$cens,
+                  X = X, 
+                  Z = Z_current,
+                  cluster=cluster,
+                  method='ML',
+                  maxstep=200)
+beta <- fit_ML$beta[1]
+sigma <- sqrt(fit_ML$varFix[1])
+low_ci_fold_inc <- signif(exp(beta - 1.96*(sigma)), 2)
+up_ci_fold_inc <- signif(exp(beta + 1.96*(sigma)), 2)
+fold_inc <- signif(exp(beta), 2)
+fold_inc_var <- cbind(var, fold_inc, low_ci_fold_inc, up_ci_fold_inc)
+fold_inc_var
+```
+###GM and GSD for G-II Coarse Aerosol
+
+####using lmer
+```{r}
+lmer <- lmer (ln_final_copies ~ (1|study_id) + (1|study_id:sample_date) , data=sarslist_other[["G-II Coarse Aerosol"]])
+summary(lmer)
+
+
+beta <- fixef(lmer)
+sigma <- sqrt(diag(vcov(lmer)))
+low_ci_fold_inc <- signif(exp(beta - 1.96*(sigma)), 2)
+up_ci_fold_inc <- signif(exp(beta + 1.96*(sigma)), 2)
+fold_inc <- signif(exp(beta), 2)
+fold_inc_var <- cbind("intercept", fold_inc, low_ci_fold_inc, up_ci_fold_inc)
+fold_inc_var   
+```
+####using lmec
+```{r}
+sarsdataset <- sarslist_other[["G-II Coarse Aerosol"]]
+  Z_current <- z_create_matrix(sarsdataset)
+  X <- matrix(rep(1, length(sarsdataset$ln_final_copies)), ncol=1) #for intercept only
+  cluster <- as.numeric(as.factor(sarsdataset$study_id))
+ fit_ML <- lmec(yL = sarsdataset$ln_final_copies,
+                  cens = sarsdataset$cens,
+                  X = X, 
+                  Z = Z_current,
+                  cluster=cluster,
+                  method='ML',
+                  maxstep=200)
+beta <- fit_ML$beta[1]
+sigma <- sqrt(fit_ML$varFix[1])
+low_ci_fold_inc <- signif(exp(beta - 1.96*(sigma)), 2)
+up_ci_fold_inc <- signif(exp(beta + 1.96*(sigma)), 2)
+fold_inc <- signif(exp(beta), 2)
+fold_inc_var <- cbind(var, fold_inc, low_ci_fold_inc, up_ci_fold_inc)
+fold_inc_var
+```
+
+###alpha
+```{r}
+dF_alpha <- pcr_dat_clean %>% filter(s_gen_pos_id == "FALSE")
+
+pcrdatclean_sampletypes <- dF_alpha$sample_type %>% unique()
+
+sarslist_alpha <- pcrdatclean_sampletypes %>% lapply(function(x) {dF_alpha %>% filter(sample_type==x)})
+names(sarslist_alpha) <- pcrdatclean_sampletypes
+
+```
+###GM and GSD for G-II Fine Aerosol
+####using lmer
+```{r}
+lmer_fine <- lmer (ln_final_copies ~ (1|study_id) + (1|study_id:sample_date) , data=sarslist_alpha[["G-II Fine Aerosol"]])
+summary(lmer_fine)
+
+
+beta_fine <- fixef(lmer_fine)
+sigma_fine <- sqrt(diag(vcov(lmer_fine)))
+low_ci_fold_inc <- signif(exp(beta_fine - 1.96*(sigma_fine)), 2)
+up_ci_fold_inc <- signif(exp(beta_fine + 1.96*(sigma_fine)), 2)
+fold_inc <- signif(exp(beta_fine), 2)
+fold_inc_var_fine <- cbind("intercept", fold_inc, low_ci_fold_inc, up_ci_fold_inc)
+fold_inc_var_fine  
+```
+###GM and GSD for G-II Coarse Aerosol
+####using lmer
+```{r}
+lmer <- lmer (ln_final_copies ~ (1|study_id) + (1|study_id:sample_date) , data=sarslist_alpha[["G-II Coarse Aerosol"]])
+summary(lmer)
+
+beta <- fixef(lmer)
+sigma <- sqrt(diag(vcov(lmer)))
+low_ci_fold_inc <- signif(exp(beta - 1.96*(sigma)), 2)
+up_ci_fold_inc <- signif(exp(beta + 1.96*(sigma)), 2)
+fold_inc <- signif(exp(beta), 2)
+fold_inc_var <- cbind("intercept", fold_inc, low_ci_fold_inc, up_ci_fold_inc)
+fold_inc_var   
+```

@@ -1,0 +1,526 @@
+---
+title: "figs_1_2_s7_s8_s11_correlation_violin_plots"
+author:
+  - "Sanmi Adenaiye"
+  - "Don Milton"
+date:
+  - "4/15/2021; 7/17/2021"
+output:
+  html_document: default
+---
+correlation plots, violin plots
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(ggpubr)
+library(scales)
+library(grid)
+library(ggthemes)
+set.seed(42)
+```
+
+```{r include=FALSE}
+# Theme for display parameters
+theme_Publication <- function(base_size=14, base_family="sans") {
+      (theme_foundation(base_size=base_size, base_family=base_family)
+       + theme(plot.title = element_text(face = "bold",
+                                         size = rel(1.2), hjust = 0.5),
+               text = element_text(),
+               panel.background = element_rect(colour = NA),
+               plot.background = element_rect(colour = NA),
+               panel.border = element_rect(colour = NA),
+               axis.title = element_text(face = "bold",size = rel(1)),
+               axis.title.y = element_text(angle=90,vjust =2),
+               axis.title.x = element_text(vjust = -0.2),
+               axis.text = element_text(), 
+               axis.line = element_line(colour="black"),
+               axis.ticks = element_line(),
+               panel.grid.major = element_line(colour="#f0f0f0"),
+               panel.grid.minor = element_blank(),
+               legend.key = element_rect(colour = NA),
+               legend.position = "bottom",
+               legend.direction = "horizontal",
+               legend.key.size= unit(0.2, "cm"),
+               legend.spacing = unit(0.2, "cm"),
+               legend.title = element_text("S.gene dropout",face="italic"),
+               plot.margin=unit(c(10,5,5,5),"mm"),
+               strip.background=element_rect(colour="#f0f0f0",fill="#f0f0f0"),
+               strip.text = element_text(face="bold")))}
+
+scale_fill_Publication <- function(...){
+      discrete_scale("fill","Publication",manual_pal(values = c("#b03838","#386cb0","#7fc97f","#ef3b2c","#662506","#a6cee3","#fb9a99","#984ea3","#ffff33")), ...)}
+
+scale_colour_Publication <- function(...){
+      discrete_scale("colour","Publication",manual_pal(values = c("#b03838","#386cb0","#7fc97f","#ef3b2c","#662506","#a6cee3","#fb9a99","#984ea3","#ffff33")), ...)}
+# to use this: scale_fill_Publication()+scale_colour_Publication()+theme_Publication()
+```
+# use replicate per row data from paired and nonpaired sets, screened for seronegative
+```{r}
+rpr_paired <- read.csv("../working_files/paired_pcr_sx_rpr.csv")
+pcr_dat <- rpr_paired %>% filter(pos_enrollment=="Negative")
+
+rpr_nonpaired <- read.csv("../working_files/nonpaired_pcr_sx_rpr.csv")
+pcr_dat_nonpaired <- rpr_nonpaired %>% filter(pos_enrollment=="Negative")
+
+# number of subjects and samples per sample type
+pcr_dat %>% group_by(sample_type) %>% summarise(subjects=length(unique(study_id)),samples=n())
+```
+rearrange data for ggplot:
+
+replace -1 with NA for the non-detects
+find mean ct per sample - this will exclude non-detects when estimating the mean
+log10(x+1),x=rna copies - this will keep non-detects as zero in the plots
+replace NA with 41 for the non-detects
+```{r}
+#mean n_gene Ct per sample
+pcr_dat$ngene_CT <- pcr_dat$ct_ngene_qpcr
+pcr_dat$ngene_CT[which(pcr_dat$ngene_CT==-1)] <- NA #replace CT of non detects with NA so it won't contribute to the mean estimate
+
+pcr_dat <- pcr_dat %>% group_by(sample_id) %>% mutate(av_ngene_CT=mean(ngene_CT,na.rm = T)) #average CT values so non-detects are excluded from the mean
+pcr_dat$id_date <- paste(pcr_dat$study_id,pcr_dat$sample_date,sep="-") # helper
+pcr_dat$av_ngene <- (pcr_dat$av_quant + 1) %>% log10() # add 1 to the copy numbers to avoid undefined log 0
+pcr_dat <- pcr_dat %>% distinct(sample_id,.keep_all = T) %>% #keep one replicate per sample
+  mutate(av_ngene_CT=if_else(is.nan(av_ngene_CT),41,av_ngene_CT)) %>%
+  ungroup() #replace Ct value of non-detects with 41
+
+pcr_dat %>% group_by(sample_type) %>% summarise(subjects=length(unique(study_id)),samples=n())
+```
+Data frame for the correlation plots
+```{r}
+# remove phone swabs from the correlation plots
+plot_cor <- pcr_dat %>% filter(sample_type!="Phone Swab")
+plot_cor$S.gene.dropout <- factor(plot_cor$S.gene.dropout, levels=c(T,F), labels=c("True","False"))
+plot_cor <- plot_cor %>% select(study_id,sample_date,id_date,av_ngene_CT,S.gene.dropout,av_ngene,sample_type,ct_ngene_qpcr,ct_sgene_qpcr,age_entry,days_past_onset,bmi)
+
+plot_cor %>% group_by(sample_type) %>% summarise(subjects=length(unique(study_id)),samples=n())
+```
+RNA copy number correlation plots
+
+mt/saliva is on the left (i.e. x), while breath samples are on the right (y)
+i loop through dataframes, keeping all.x=T ensures the base is fully merged and remains consisent while y varies, since there are no consistent numbers of aerosol samples per id_date
+when absent, aerosol samples will be NA and will not be plotted
+```{r}
+# Exclude masked samples  
+allsampletypes <- plot_cor$sample_type %>% unique()
+plot_cor_samplelist <- allsampletypes %>% lapply(function(x) {plot_cor %>% filter(sample_type==x)})
+names(plot_cor_samplelist) <- allsampletypes
+
+aer <- list(plot_cor_samplelist[["G-II Coarse Aerosol"]],plot_cor_samplelist[["G-II Fine Aerosol"]])
+names(aer) <- c("Coarse aerosol (log copies)","Fine aerosol (log copies)")
+
+# sal vs breath samples
+q_sal_plot <- list()
+for (i in 1:2) {
+  iplot <- plot_cor_samplelist[["Saliva"]] %>% merge(aer[[i]],all.x = T,all.y = F, by = "id_date") %>% rename(`Alpha variant:`=S.gene.dropout.x)
+  q_sal_plot[[i]] <- iplot %>%
+    ggplot(aes(y=av_ngene.y,x=av_ngene.x)) +
+    geom_point(aes(color=`Alpha variant:`),size=2,alpha=0.9,position=position_jitter(h=.1,w=.1,seed=42)) +
+    geom_smooth(method = "loess") +
+    stat_cor(method = "spearman",cor.coef.name = "rho") +
+    ylab(names(aer)[i]) +
+    xlab("Saliva (log copies)") +
+    scale_y_continuous(breaks=c(-2:5),limits = c(-2, 5)) +
+    scale_x_continuous(breaks=c(0,2,4,6,8,10),limits = c(-1, 10)) +
+    expand_limits(x=0,y=-2) +
+    scale_colour_Publication() +
+    theme_Publication()
+}
+
+#mt vs breath samples
+q_mt_plot <- list()
+for (i in 1:2) {
+  iplot <- plot_cor_samplelist[["Midturbinate Swab"]] %>% merge(aer[[i]],all.x = T,all.y = F, by = "id_date") %>% rename(`Alpha variant:`=S.gene.dropout.x)
+  q_mt_plot[[i]] <- iplot %>% 
+    ggplot(aes(y=av_ngene.y,x=av_ngene.x)) +
+    geom_point(aes(color=`Alpha variant:`),size=2,alpha=0.9,position=position_jitter(h=.1,w=.1,seed=42)) +
+    geom_smooth(method = "loess") +
+    stat_cor(method = "spearman",cor.coef.name = "rho") +
+    ylab(names(aer)[i]) +
+    xlab("Mid-turbinate swab (log copies)") +
+    scale_y_continuous(breaks=c(-2:5),limits = c(-2, 5)) +
+    scale_x_continuous(breaks=c(0,2,4,6,8,10),limits = c(-1, 10)) +
+    expand_limits(x=0,y=-2) +
+    scale_colour_Publication() + 
+    theme_Publication()
+}
+
+# Combine the plots into the one figure
+
+Figure2 <- ggarrange(q_mt_plot[[1]],q_mt_plot[[2]],q_sal_plot[[1]],q_sal_plot[[2]],
+                     common.legend = T,
+                     legend = "bottom",
+                     labels = "auto") %>%
+  annotate_figure(top = text_grob("",color = "black", face = "bold", size = 14))
+Figure2
+ggsave(Figure2,filename="../figure_output/repo_fig_2_mtsalbreath_logcopies_corr.png",device="png",width=11,height=7.77,units="in")
+```
+repo_fig2 formatted for manuscript
+```{r}
+# sal vs breath samples
+q_sal_plot_manu <- list()
+for (i in 1:2) {
+  iplot <- plot_cor_samplelist[["Saliva"]] %>% merge(aer[[i]],all.x = T,all.y = F, by = "id_date") %>% rename(`Alpha variant:`=S.gene.dropout.x)
+  q_sal_plot_manu[[i]] <- iplot %>%
+    ggplot(aes(y=av_ngene.y,x=av_ngene.x)) +
+    geom_point(aes(color=`Alpha variant:`),size=1,alpha=0.9,position=position_jitter(h=.1,w=.1,seed=42)) +
+    geom_smooth(method = "loess") +
+    stat_cor(method = "spearman",cor.coef.name = "rho",family="arial",size=2.8) +
+    ylab(names(aer)[i]) +
+    xlab("Saliva (log copies)") +
+    scale_y_continuous(breaks=c(-2:5),limits = c(-2, 5)) +
+    scale_x_continuous(breaks=c(0,2,4,6,8,10),limits = c(-1, 10)) +
+    expand_limits(x=0,y=-2) +
+    scale_colour_Publication() +
+    theme_Publication(base_family="arial",base_size = 8) +
+    theme(plot.margin=unit(c(5,2.5,2.5,2.5),"mm"))
+}
+
+#mt vs breath samples
+q_mt_plot_manu <- list()
+for (i in 1:2) {
+  iplot <- plot_cor_samplelist[["Midturbinate Swab"]] %>% merge(aer[[i]],all.x = T,all.y = F, by = "id_date") %>% rename(`Alpha variant:`=S.gene.dropout.x)
+  q_mt_plot_manu[[i]] <- iplot %>% 
+    ggplot(aes(y=av_ngene.y,x=av_ngene.x)) +
+    geom_point(aes(color=`Alpha variant:`),size=1,alpha=0.9,position=position_jitter(h=.1,w=.1,seed=42)) +
+    geom_smooth(method = "loess") +
+    stat_cor(method = "spearman",cor.coef.name = "rho",family="arial",size=2.8) +
+    ylab(names(aer)[i]) +
+    xlab("Mid-turbinate swab (log copies)") +
+    scale_y_continuous(breaks=c(-2:5),limits = c(-2, 5)) +
+    scale_x_continuous(breaks=c(0,2,4,6,8,10),limits = c(-1, 10)) +
+    expand_limits(x=0,y=-2) +
+    scale_colour_Publication() + 
+    theme_Publication(base_family="arial",base_size = 8) +
+    theme(plot.margin=unit(c(5,2.5,2.5,2.5),"mm"))
+}
+
+# Combine the plots into the one figure
+
+Figure2_manu <- ggarrange(q_mt_plot_manu[[1]],q_mt_plot_manu[[2]],q_sal_plot_manu[[1]],q_sal_plot_manu[[2]],
+                     common.legend = T,
+                     legend = "bottom",
+                     labels = "auto",
+                     font.label=list(size=8,family="arial")) # %>%
+  #annotate_figure(top = text_grob("",color = "black", face = "bold", family="arial",size = 8))
+Figure2_manu
+ggsave(Figure2_manu,filename="../figure_output/tif/tif_raw/repo_fig_2_mtsalbreath_logcopies_corr_manuscript.tif",device="tiff",width=7,height=4.94,units="in",dpi=600)
+ggsave(Figure2_manu,filename="../figure_output/png_600/repo_fig_2_mtsalbreath_logcopies_corr_600.png",device="png",width=7,height=4.94,units="in",dpi=600)
+```
+CT correlation plots
+```{r warning=FALSE}
+aer2 <- list(plot_cor_samplelist[["G-II Fine Aerosol"]],plot_cor_samplelist[["G-II Coarse Aerosol"]])
+names(aer2) <- c("Coarse aerosol","Fine aerosol")
+
+#sal vs aerosol
+ct_sal_plot <- list()
+for (i in 1:2) {
+  iplot <- plot_cor_samplelist[["Saliva"]] %>% merge(aer2[[i]],all.x = F,all.y = F, by = "id_date") %>% rename(`Alpha variant:`=S.gene.dropout.x)
+  ct_sal_plot[[i]] <- iplot %>%
+    ggplot(aes(y=av_ngene_CT.y,x=av_ngene_CT.x)) +
+    geom_point(aes(color=`Alpha variant:`),size=2) +
+    geom_smooth(method = "loess", formula = y ~ x) +
+    stat_cor(method = "spearman",cor.coef.name = "rho") +
+    ylab(paste0(names(aer2)[i]," (Ct)")) +
+    xlab("Saliva (Ct)") +
+    scale_y_continuous(breaks=c(10,15,20,25,30,35,40,45),limits = c(25,45)) +
+    scale_x_continuous(breaks=c(10,20,30,40),limits = c(10, 45)) +
+    scale_colour_Publication() +
+    theme_Publication()
+}
+
+#mt vs aerosol
+ct_mt_plot <- list()
+for (i in 1:2) {
+  iplot <- plot_cor_samplelist[["Midturbinate Swab"]] %>% merge(aer2[[i]],all.x = F,all.y = F, by = "id_date") %>% rename(`Alpha variant:`=S.gene.dropout.x)
+  ct_mt_plot[[i]] <- iplot %>%
+    ggplot(aes(y=av_ngene_CT.y,x=av_ngene_CT.x)) +
+    geom_point(aes(color=`Alpha variant:`),size=2) +
+    geom_smooth(method = "loess", formula = y ~ x) +
+    stat_cor(method = "spearman",cor.coef.name = "rho") +
+    ylab(paste0(names(aer2)[i]," (Ct)")) +
+    xlab("Mid-turbinate swab (Ct)") +
+    scale_y_continuous(breaks=c(10,15,20,25,30,35,40,45),limits = c(25,45)) +
+    scale_x_continuous(breaks=c(10,20,30,40),limits = c(10, 45)) +
+    scale_colour_Publication() +
+    theme_Publication()
+}
+
+figS7 <- ggarrange(ct_mt_plot[[1]],ct_mt_plot[[2]],ct_sal_plot[[1]],ct_sal_plot[[2]],
+                   common.legend = T,
+                   legend = "bottom",
+                   labels = "auto") %>%
+  annotate_figure(top = text_grob("",color = "black", face = "bold", size = 14))
+
+figS7
+ggsave(figS7,filename="../figure_output/repo_fig_s7_mtsalbreath_ct_corr.png",device="png",width=11,height=7.77,units="in")
+```
+repo_fig_s7 formatted for tif
+```{r}
+#sal vs aerosol
+ct_sal_plot_manu <- list()
+for (i in 1:2) {
+  iplot <- plot_cor_samplelist[["Saliva"]] %>% merge(aer2[[i]],all.x = F,all.y = F, by = "id_date") %>% rename(`Alpha variant:`=S.gene.dropout.x)
+  ct_sal_plot_manu[[i]] <- iplot %>%
+    ggplot(aes(y=av_ngene_CT.y,x=av_ngene_CT.x)) +
+    geom_point(aes(color=`Alpha variant:`),size=1) +
+    geom_smooth(method = "loess", formula = y ~ x) +
+    stat_cor(method = "spearman",cor.coef.name = "rho",family="arial",size=2.8) +
+    ylab(paste0(names(aer2)[i]," (Ct)")) +
+    xlab("Saliva (Ct)") +
+    scale_y_continuous(breaks=c(10,15,20,25,30,35,40,45),limits = c(25,45)) +
+    scale_x_continuous(breaks=c(10,20,30,40),limits = c(10, 45)) +
+    scale_colour_Publication() +
+    theme_Publication(base_family="arial",base_size = 8) +
+    theme(plot.margin=unit(c(5,2.5,2.5,2.5),"mm"))
+}
+
+#mt vs aerosol
+ct_mt_plot_manu <- list()
+for (i in 1:2) {
+  iplot <- plot_cor_samplelist[["Midturbinate Swab"]] %>% merge(aer2[[i]],all.x = F,all.y = F, by = "id_date") %>% rename(`Alpha variant:`=S.gene.dropout.x)
+  ct_mt_plot_manu[[i]] <- iplot %>%
+    ggplot(aes(y=av_ngene_CT.y,x=av_ngene_CT.x)) +
+    geom_point(aes(color=`Alpha variant:`),size=1) +
+    geom_smooth(method = "loess", formula = y ~ x) +
+    stat_cor(method = "spearman",cor.coef.name = "rho",family="arial",size=2.8) +
+    ylab(paste0(names(aer2)[i]," (Ct)")) +
+    xlab("Mid-turbinate swab (Ct)") +
+    scale_y_continuous(breaks=c(10,15,20,25,30,35,40,45),limits = c(25,45)) +
+    scale_x_continuous(breaks=c(10,20,30,40),limits = c(10, 45)) +
+    scale_colour_Publication() +
+    theme_Publication(base_family="arial",base_size = 8) +
+    theme(plot.margin=unit(c(5,2.5,2.5,2.5),"mm"))
+}
+
+figS7_manu <- ggarrange(ct_mt_plot_manu[[1]],ct_mt_plot_manu[[2]],ct_sal_plot_manu[[1]],ct_sal_plot_manu[[2]],
+                   common.legend = T,
+                   legend = "bottom",
+                   labels = "auto",
+                   font.label=list(size=8,family="arial"))
+
+figS7_manu
+ggsave(figS7_manu,filename="../figure_output/tif/tif_raw/repo_fig_s7_mtsalbreath_ct_corr_manuscript.tif",device="tiff",width=7,height=4.94,units="in",dpi=600)
+ggsave(figS7_manu,filename="../figure_output/png_600/repo_fig_s7_mtsalbreath_ct_corr_600.png",device="png",width=7,height=4.94,units="in",dpi=600)
+```
+MT vs Saliva RNA copies correlation, Ct value correlation
+```{r}
+# MT vs Saliva RNA copies correlation
+salmt <- merge(plot_cor_samplelist[["Saliva"]],plot_cor_samplelist[["Midturbinate Swab"]],all.x=T,all.y=F,by="id_date") %>% rename(`Alpha variant:`=S.gene.dropout.x)
+salmt_plot_q <- ggplot(salmt,aes(y=av_ngene.y,x=av_ngene.x)) +
+  geom_point(aes(color=`Alpha variant:`),size=2,alpha=0.9,position=position_jitter(h=.1,w=.1,seed=42)) +
+  geom_text(x=1.5,y=8,label=str_wrap(paste("Samples (n): ",sum(!is.na(salmt$av_ngene.y))),15)) +
+  geom_smooth(method = "loess", formula = y ~ x) +
+  stat_cor(method = "spearman",cor.coef.name = "rho") +
+   ylab("Mid-turbinate swab (log copies)") +
+  xlab("Saliva (log copies)") +
+  scale_y_continuous(breaks=c(0,2,4,6,8,10),limits = c(0, 10)) +
+  scale_x_continuous(breaks=c(0,2,4,6,8,10),limits = c(0, 10)) +
+  expand_limits(x=0,y=-2) +
+  scale_colour_Publication() +
+  theme_Publication()
+salmt_plot_q
+
+# MT vs Saliva Ct value correlation
+salmt_plot_ct <- ggplot(salmt,aes(y=av_ngene_CT.y,x=av_ngene_CT.x)) +
+  geom_point(aes(color=`Alpha variant:`),size=2,alpha=0.9,position=position_jitter(h=.1,w=.1,seed=42)) +
+  geom_text(x=17,y=32,label=str_wrap(paste("Samples (n): ",sum(!is.na(salmt$av_ngene.y))),15)) +
+  geom_smooth(method = "loess", formula = y ~ x) +
+  stat_cor(method="spearman",cor.coef.name = "rho") +
+  ylab("Mid-turbinate swab (Ct value)") +
+  xlab("Saliva (Ct value)") +
+  scale_colour_Publication() +
+  theme_Publication()
+
+salmt_plot_ct
+
+# Combine mt_sal Ct and RNA plots
+FigureS8 <- ggarrange(salmt_plot_q,salmt_plot_ct,common.legend = T,legend = "bottom",labels = "auto") %>%
+  annotate_figure(top = text_grob("",color = "black", face = "bold", size = 14)) 
+FigureS8
+ggsave(FigureS8,filename="../figure_output/repo_fig_s8_mt_saliva_corr.png",device="png",width=11,height=5.75,units="in")
+```
+repo_fig_s8 for manuscript
+```{r}
+salmt_plot_q_manu <- ggplot(salmt,aes(y=av_ngene.y,x=av_ngene.x)) +
+  geom_point(aes(color=`Alpha variant:`),size=1,alpha=0.9,position=position_jitter(h=.1,w=.1,seed=42)) +
+  geom_text(x=1.5,y=8,label=str_wrap(paste("Samples (n): ",sum(!is.na(salmt$av_ngene.y))),15),family="arial",size=2.8) +
+  geom_smooth(method = "loess", formula = y ~ x) +
+  stat_cor(method = "spearman",cor.coef.name = "rho",family="arial",size=2.8) +
+   ylab("Mid-turbinate swab (log copies)") +
+  xlab("Saliva (log copies)") +
+  scale_y_continuous(breaks=c(0,2,4,6,8,10),limits = c(0, 10)) +
+  scale_x_continuous(breaks=c(0,2,4,6,8,10),limits = c(0, 10)) +
+  expand_limits(x=0,y=-2) +
+  scale_colour_Publication() +
+  theme_Publication(base_family="arial",base_size = 8) +
+  theme(plot.margin=unit(c(5,2.5,2.5,2.5),"mm"))
+salmt_plot_q_manu
+
+# MT vs Saliva Ct value correlation
+salmt_plot_ct_manu <- ggplot(salmt,aes(y=av_ngene_CT.y,x=av_ngene_CT.x)) +
+  geom_point(aes(color=`Alpha variant:`),size=1,alpha=0.9,position=position_jitter(h=.1,w=.1,seed=42)) +
+  geom_text(x=17,y=32,label=str_wrap(paste("Samples (n): ",sum(!is.na(salmt$av_ngene.y))),15),family="arial",size=2.8) +
+  geom_smooth(method = "loess", formula = y ~ x) +
+  stat_cor(method="spearman",cor.coef.name = "rho",family="arial",size=2.8) +
+  ylab("Mid-turbinate swab (Ct value)") +
+  xlab("Saliva (Ct value)") +
+  scale_colour_Publication() +
+  theme_Publication(base_family="arial",base_size = 8) +
+  theme(plot.margin=unit(c(5,2.5,2.5,2.5),"mm"))
+
+salmt_plot_ct_manu
+
+# Combine mt_sal Ct and RNA plots
+FigureS8_manu <- ggarrange(salmt_plot_q_manu,salmt_plot_ct_manu,common.legend = T,legend = "bottom",labels = "auto",font.label=list(size=8,family="arial"))
+FigureS8_manu
+ggsave(FigureS8_manu,filename="../figure_output/tif/tif_raw/repo_fig_s8_mt_saliva_corr_manuscript.tif",device="tiff",width=7,height=3.66,units="in",dpi=600)
+ggsave(FigureS8_manu,filename="../figure_output/png_600/repo_fig_s8_mt_saliva_corr_png_600.png",device="png",width=7,height=3.66,units="in",dpi=600)
+```
+# Violin plots
+```{r}
+pcr_dat_violin <- pcr_dat
+pcr_dat_violin <- pcr_dat_violin %>%  mutate(`S gene dropout2`=(ct_ngene_qpcr>0 & ct_sgene_qpcr<0))
+
+pcr_dat_violin$sample_type <- as.character(pcr_dat_violin$sample_type)
+pcr_dat_violin$sample_type[which(pcr_dat_violin$sample_type=="G-II Coarse Aerosol")] <- "Coarse aerosol without mask"
+pcr_dat_violin$sample_type[which(pcr_dat_violin$sample_type=="G-II Coarse Aerosol mask")] <- "Coarse aerosol with mask"
+pcr_dat_violin$sample_type[which(pcr_dat_violin$sample_type=="G-II Fine Aerosol")] <- "Fine aerosol without mask"
+pcr_dat_violin$sample_type[which(pcr_dat_violin$sample_type=="G-II Fine Aerosol mask")] <- "Fine aerosol with mask"
+
+pcr_dat_violin <- pcr_dat_violin %>% filter(sample_type %in% c("Midturbinate Swab","Phone Swab","Saliva","Coarse aerosol without mask","Coarse aerosol with mask","Fine aerosol without mask","Fine aerosol with mask"))
+
+table(pcr_dat_violin$sample_type)
+```
+
+Violin plot for breath samples, MTs, saliva, phone swabs
+```{r}
+seronegative_breath_violin_dF <- pcr_dat_violin %>% filter(pos_enrollment=="Negative") %>%
+  mutate(sample_type=factor(sample_type,
+                            levels = c("Midturbinate Swab","Saliva","Phone Swab","Coarse aerosol without mask","Coarse aerosol with mask","Fine aerosol without mask","Fine aerosol with mask"),
+                            labels = c("MTS","Saliva","Fomite","Coarse aerosol","Coarse aerosol +mask","Fine aerosol","Fine aerosol +mask")))
+seronegative_breath_violin_dF <-seronegative_breath_violin_dF %>% group_by(sample_type) %>% mutate(n=sum(!is.na(av_ngene))) #count number of log RNA copies per sample type to be displayed in the plots
+
+# fill color for nomask breath samples, MT, Saliva, and phone swabs to be red
+seronegative_breath_violin_dF$red <- T
+seronegative_breath_violin_dF$red[which(seronegative_breath_violin_dF$mask_yn==0)] <- F
+seronegative_breath_violin_dF$red[which(seronegative_breath_violin_dF$sample_type %in% c("MTS","Saliva","Fomite"))] <- F
+
+seronegative_breath_violin_plot <- seronegative_breath_violin_dF %>% 
+  ggplot(aes(x = factor(sample_type), av_ngene,fill=factor(red,levels=c(T,F)),color=mask_yn)) +
+  geom_violin(lwd=.8,color="black",width=1.1,position=position_dodge(width=2)) +
+  geom_point(lwd=1,color="black",position=position_jitter(h=0.05,w=.1,seed=42)) +
+  geom_text(aes(y=-1,label=paste("n=",n)),position = position_dodge(0.5),color="black") +
+  labs(y = "log10 RNA copies", x = "") +
+  theme(axis.text.x = element_text(angle = 0),legend.position = "none") +
+  scale_y_continuous(limits=c(-2,10), breaks = c(0:10)) +
+  scale_x_discrete(labels = wrap_format(10.5)) +
+  theme_bw() +
+  scale_fill_Publication() +
+  scale_colour_Publication() +
+  theme_Publication() +
+  guides(fill=guide_legend(title="With mask")) +
+  theme(legend.position = "bottom")
+
+seronegative_breath_violin_plot
+ggsave(seronegative_breath_violin_plot,filename="../figure_output/repo_fig_1_violin_shedding_paired.png",device="png",width=11,height=5.75,units="in")
+```
+TIFF version of repo_fig_1
+```{r}
+seronegative_breath_violin_plot_manuscript <- seronegative_breath_violin_dF %>% 
+  ggplot(aes(x = factor(sample_type), av_ngene,fill=factor(red,levels=c(T,F)),color=mask_yn)) +
+  geom_violin(lwd=.8,color="black",width=1.1,position=position_dodge(width=2)) +
+  geom_point(lwd=0.2,color="black",position=position_jitter(h=0.05,w=.1,seed=42)) +
+  geom_text(aes(y=-1,label=paste("n=",n)),position = position_dodge(0.5),color="black",size=2,family="arial") +
+  labs(y = "log10 RNA copies", x = "") +
+  theme(axis.text.x = element_text(angle = 0,family="arial",size=8),legend.position = "none") +
+  scale_y_continuous(limits=c(-2,10), breaks = c(0:10)) +
+  scale_x_discrete(labels = wrap_format(10.5)) +
+  theme_bw() +
+  scale_fill_Publication() +
+  scale_colour_Publication() +
+  theme_Publication(base_family="arial",base_size=8) +
+  guides(fill=guide_legend(title="With mask")) +
+  theme(legend.position = "bottom", legend.text=element_text(size=8),
+        plot.margin=unit(c(5,2.5,2.5,2.5),"mm"))
+seronegative_breath_violin_plot_manuscript
+ggsave(seronegative_breath_violin_plot_manuscript,filename="../figure_output/tif/tif_raw/repo_fig_1_violin_shedding_paired_manuscript.tif",device="tiff",width=7,height=3.66,units="in", dpi=600)
+```
+# Fig s11 (violin plot for display cut-off)
+```{r}
+#explore culture status
+pcr_dat_violin2 <- pcr_dat_nonpaired
+pcr_dat_violin2$ngene_CT <- pcr_dat_violin2$ct_ngene_qpcr
+pcr_dat_violin2$ngene_CT[which(pcr_dat_violin2$ngene_CT==-1)] <- NA #replace CT of non detects with NA so it won't contribute to the mean estimate
+
+pcr_dat_violin2 <- pcr_dat_violin2 %>% group_by(sample_id) %>% mutate(av_ngene_CT=mean(ngene_CT,na.rm = T)) #average CT values so non-detects are excluded from the mean
+pcr_dat_violin2$id_date <- paste(pcr_dat_violin2$study_id,pcr_dat_violin2$sample_date,sep="-") # helper
+pcr_dat_violin2$av_ngene <- (pcr_dat_violin2$av_quant + 1) %>% log10() # add 1 to the copy numbers to avoid undefined log 0
+pcr_dat_violin2 <- pcr_dat_violin2 %>% distinct(sample_id,.keep_all = T) %>% #keep one replicate per sample
+  mutate(av_ngene_CT=if_else(is.nan(av_ngene_CT),41,av_ngene_CT)) %>%
+  ungroup() #replace Ct value of non-detects with 41
+
+pcr_dat_violin2$sample_type <- as.character(pcr_dat_violin2$sample_type)
+pcr_dat_violin2$sample_type[which(pcr_dat_violin2$sample_type=="G-II Coarse Aerosol")] <- "Coarse aerosol without mask"
+pcr_dat_violin2$sample_type[which(pcr_dat_violin2$sample_type=="G-II Coarse Aerosol mask")] <- "Coarse aerosol with mask"
+pcr_dat_violin2$sample_type[which(pcr_dat_violin2$sample_type=="G-II Fine Aerosol")] <- "Fine aerosol without mask"
+pcr_dat_violin2$sample_type[which(pcr_dat_violin2$sample_type=="G-II Fine Aerosol mask")] <- "Fine aerosol with mask"
+
+pcr_dat_violin <- pcr_dat_violin %>% filter(sample_type %in% c("Midturbinate Swab","Phone Swab","Saliva","Coarse aerosol without mask","Coarse aerosol with mask","Fine aerosol without mask","Fine aerosol with mask"))
+
+pcr_dat_violin2 <- pcr_dat_violin2 %>% filter(sample_type %in% c("Midturbinate Swab","Phone Swab","Saliva","Coarse aerosol without mask","Coarse aerosol with mask","Fine aerosol without mask","Fine aerosol with mask"))
+#
+seronegative_breath_violin_dF_nonpaired <- pcr_dat_violin2 %>% filter(pos_enrollment=="Negative") %>%
+  mutate(sample_type=factor(sample_type,
+                            levels = c("Midturbinate Swab","Saliva","Phone Swab","Coarse aerosol without mask","Coarse aerosol with mask","Fine aerosol without mask","Fine aerosol with mask"),
+                            labels = c("MTS","Saliva","Fomite","Coarse aerosol","Coarse aerosol +mask","Fine aerosol","Fine aerosol +mask")))
+seronegative_breath_violin_dF_nonpaired <-seronegative_breath_violin_dF_nonpaired %>% group_by(sample_type) %>% mutate(n=sum(!is.na(av_ngene))) #count number of log RNA copies per sample type to be displayed in the plots
+
+table(seronegative_breath_violin_dF_nonpaired$culture_status)
+
+seronegative_breath_violin_dF_cult <- seronegative_breath_violin_dF_nonpaired %>% mutate(sampletype_culturestatus=factor(paste("Culture",culture_status,sample_type)))
+
+table(seronegative_breath_violin_dF_cult$sampletype_culturestatus)
+
+seronegative_breath_violin_dF_cult <- seronegative_breath_violin_dF_cult %>% group_by(sampletype_culturestatus) %>% mutate(n_culture=n())
+seronegative_breath_violin_dF_cult1 <- seronegative_breath_violin_dF_cult %>% filter(!(culture_status %in% c("not cultured","imputed sample")) & !grepl("Spray",sample_type)) %>% rename(`Culture status`=culture_status)
+
+# color the fine aerosol masked culture positive points red (#bo3838)
+seronegative_breath_violin_dF_cult1$pointcolor <- "black"
+seronegative_breath_violin_dF_cult1$pointcolor[seronegative_breath_violin_dF_cult1$sampletype_culturestatus=="Culture positive Fine aerosol +mask"] <- "#b03838"
+
+violin_culture <- seronegative_breath_violin_dF_cult1 %>%
+  ggplot(aes(x = (sampletype_culturestatus), av_ngene,fill=`Culture status`,color=mask_yn)) + 
+  geom_violin(lwd=.8,color="black",width=1.1,position=position_dodge(width=3)) +
+  geom_point(lwd=1,color=seronegative_breath_violin_dF_cult1$pointcolor,position=position_jitter(h=0.05,w=.1,seed=42)) +
+  geom_text(aes(y=-1,label=paste("n=",n_culture)),position = position_dodge(0.5),color="black") +
+  labs(y = "log10 RNA copies", x = "") +
+  theme(axis.text.x = element_text(angle = 0),legend.position = "bottom") +
+  scale_y_continuous(limits=c(-2,10), breaks = c(0:10)) +
+  scale_x_discrete(labels = wrap_format(10.5)) +
+  scale_colour_Publication() +
+  scale_fill_manual(labels=c("negative","positive"),values =c("#386CB0","#B03838")) + # switch the colors to match the levels
+  theme_Publication()
+
+violin_culture
+ggsave(violin_culture,filename="../figure_output/repo_fig_s11_violin_culture.png",device="png",width=11,height=7.5,units="in")
+```
+TIFF version of repo_fig_s11
+```{r}
+violin_culture_manuscript <- seronegative_breath_violin_dF_cult1 %>%
+  ggplot(aes(x = (sampletype_culturestatus), av_ngene,fill=`Culture status`,color=mask_yn)) + 
+  geom_violin(lwd=.8,color="black",width=1.1,position=position_dodge(width=3)) +
+  geom_point(lwd=0.2,color=seronegative_breath_violin_dF_cult1$pointcolor,position=position_jitter(h=0.05,w=.1,seed=42)) +
+  geom_text(aes(y=-1,label=paste("n=",n_culture)),position = position_dodge(0.5),color="black",family="arial",size=2) +
+  labs(y = "log10 RNA copies", x = "") +
+  theme(axis.text.x = element_text(angle = 0),legend.position = "bottom") +
+  scale_y_continuous(limits=c(-2,10), breaks = c(0:10)) +
+  scale_x_discrete(labels = wrap_format(10.5)) +
+  scale_colour_Publication() +
+  scale_fill_manual(labels=c("negative","positive"),values =c("#386CB0","#B03838")) + # switch the colors to match the levels
+  theme_Publication(base_family="arial",base_size=8) +
+  theme(legend.text=element_text(size=8),
+        plot.margin=unit(c(5,2.5,2.5,2.5),"mm"))
+
+violin_culture_manuscript
+ggsave(violin_culture_manuscript,filename="../figure_output/tif/tif_raw/repo_fig_s11_violin_culture_manuscript.tif",device="tiff",width=7,height=4.77,units="in",dpi=600)
+```

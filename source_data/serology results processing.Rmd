@@ -1,0 +1,26 @@
+---
+title: "serology results processing"
+author: "Filbert Hong"
+date: "April 8, 2021"
+output: html_document
+---
+contains snippets for doing light cleaning on Kristen's data
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+```
+read all serology files and bind them together
+```{r serology files}
+serofilenames <- list.files("serology files")
+serolatest <- serofilenames %>% paste0("serology files/",.) %>% lapply(function(x) {read.csv(file=x,colClasses = "character")})
+serolatest1 <- serolatest %>% bind_rows()
+serolatest1 <- serolatest1 %>% arrange(as.numeric(subject_id),collection_date,sample_type,sample_id)
+```
+check the date column, which often gets screwed up
+```{r date fix}
+serolatest1$collection_date <- serolatest1$collection_date %>% sapply(function(x) {if (!grepl("/",x)) {x} else {x %>% as.Date(origin="1970-01-01",format="%m/%d/%Y") %>% as.character()}})
+```
+write
+```{r write serology}
+write.csv(serolatest1,file = "serology_results_latest.csv",row.names=F)
+```

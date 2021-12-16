@@ -1,0 +1,157 @@
+---
+title: "table_s7_probability_culture"
+author: "Jianyu Lai"
+date: "7/19/2021"
+output:
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(skimr)
+library(ggpubr)
+source("fixRNAscientific.R")
+```
+
+## use nonpaired sample per row set filtered for negsero and known culture status
+```{r}
+spr <- read.csv("../working_files/nonpaired_pcr_sx_spr.csv")
+spr <- spr %>% filter(pos_enrollment=="Negative" & culture_status %in% c("positive", "negative"))
+spr <- spr %>% mutate(log_av_quant = if_else(av_quant == 0, 0, log(av_quant)),
+                      log_10_av_quant = if_else (av_quant == 0, 0, log10(av_quant)),
+                      culture = if_else(culture_status=="positive", 1, 0))
+table(spr$culture_status, spr$culture)
+```
+
+## glm for MTS and saliva
+```{r}
+
+# MTS
+mt <- spr %>% filter(sample_type=="Midturbinate Swab")
+logit_log_10_mt <- glm(culture ~ log_10_av_quant, data = mt, family = "binomial")
+summary(logit_log_10_mt)
+mt$log_10_prob <- logit_log_10_mt$fitted.values
+
+# saliva
+saliva <- spr %>% filter(sample_type=="Saliva")
+logit_log_10_saliva <- glm(culture ~ log_10_av_quant, data = saliva, family = "binomial")
+summary(logit_log_10_saliva)
+saliva$log_10_prob <- logit_log_10_saliva$fitted.values
+```
+
+### Subanalysis to find the probability of culture positive for av_quant as log10 of av_quant from 0 to 10
+### Estimate the quantum (TCID63 an TCID50) of infection based on mt and saliva cultures
+### the latter using log(p/(1-p)) = exp(beta0+beta1*X)
+```{r}
+# create vector of input average log10 RNA copies
+log10_N <- seq(0,10,1)
+
+# mt
+beta0_mt <- logit_log_10_mt$coefficients[1]
+beta_mt <- logit_log_10_mt$coefficients[2]
+prob_mt <- exp(beta0_mt+beta_mt*log10_N)/(1+exp(beta0_mt+beta_mt*log10_N))
+prob_mt <- signif(prob_mt,2)
+
+# saliva
+beta0_sal <- logit_log_10_saliva$coefficients[1]
+beta_sal <- logit_log_10_saliva$coefficients[2]
+prob_sal <- exp(beta0_sal+beta_sal*log10_N)/(1+exp(beta0_sal+beta_sal*log10_N))
+prob_sal <- signif(prob_sal,2)
+
+prob_pos <- cbind(log10_N, prob_mt, prob_sal)
+
+p_63 <- 1-exp(-1)
+p_50 <- 0.5
+TCID63_mt <- (log(p_63/(1-p_63))-beta0_mt)/beta_mt
+TCID50_mt <- (log(p_50/(1-p_50))-beta0_mt)/beta_mt
+
+TCID63_sal <- (log(p_63/(1-p_63))-beta0_sal)/beta_sal
+TCID50_sal <- (log(p_50/(1-p_50))-beta0_sal)/beta_sal
+
+prob_pos
+rbind(TCID50_mt, TCID63_mt, TCID50_sal, TCID63_sal)
+```
+
+## probability of culture positive for table 2, s7a, s7b values
+```{r}
+table2df <- read.csv("../working_files/repo_table_2_semiformatted.csv",stringsAsFactors=F)
+table7adf <- read.csv("../working_files/repo_table_s7a_semiformatted.csv",stringsAsFactors=F)
+table7bdf <- read.csv("../working_files/repo_table_s7b_semiformatted.csv",stringsAsFactors=F)
+
+table2GMvals <- table2df$GM..95..CI. %>% strsplit("\\(") %>% sapply(head,1) %>% as.numeric()
+table7aGMvals <- table7adf$GM..95..CI. %>% strsplit("\\(") %>% sapply(head,1) %>% as.numeric()
+table7bGMvals <- table7bdf$GM..95..CI. %>% strsplit("\\(") %>% sapply(head,1) %>% as.numeric()
+
+names(table2GMvals) <- table2df$Sample.Type
+names(table7aGMvals) <- table7adf$Sample.Type
+names(table7bGMvals) <- table7bdf$Sample.Type
+
+sampletypes1 <- names(table2GMvals) %>% subset(!grepl("droplet",tolower(.))) %>% subset(!grepl("mask",tolower(.)))
+valuesGM <- sampletypes1 %>% lapply(function(x) {c(table2GMvals[[x]],table7aGMvals[[x]],table7bGMvals[[x]])}) %>% unlist()
+
+table7amaxvals <- table7adf$Maximum.RNA.copies
+table7bmaxvals <- table7bdf$Maximum.RNA.copies
+
+names(table7amaxvals) <- table7adf$Sample.Type
+names(table7bmaxvals) <- table7bdf$Sample.Type
+
+valuesmaxRNA <- sampletypes1 %>% lapply(function(x) {c(table7amaxvals[[x]],table7bmaxvals[[x]])}) %>% unlist()
+values <- c(valuesGM,valuesmaxRNA)
+```
+
+## back-calculate 50% probability of a positive culture for MTS and saliva
+```{r}
+# MTS
+p_50_mt <- 10^(-beta0_mt/beta_mt) #781180.7
+p_50_mt_format <- signif(p_50_mt,2)
+
+# saliva
+p_50_sal <- 10^(-beta0_sal/beta_sal) #5204405
+p_50_sal_format <- signif(p_50_sal,2)
+
+p_50_mt_format <- p_50_mt_format %>% fixRNAscientific()
+p_50_mt_format
+p_50_sal_format <- p_50_sal_format %>% fixRNAscientific()
+p_50_sal_format
+
+textoutput <- paste0("The RNA concentration associated with a 50% probability of a positive culture was ",p_50_mt_format," for MTS and ",p_50_sal_format," for saliva (Figure S2).")
+textoutput
+write(textoutput,file="../table_output/repo_table_s7_50_probability.txt")
+```
+
+```{r}
+valuesdf <- matrix(values,ncol=1) %>% as.data.frame(stringsAsFactors=F)
+colnames(valuesdf) <- "RNAvalues"
+valuesdf$Level <- c(rep("Gemoetric mean level",15),rep("Maximum RNA copies",10))
+valuesdf$`Sample Type` <- c(sampletypes1 %>% lapply(rep,3) %>% unlist(),sampletypes1 %>% lapply(rep,2) %>% unlist())
+valuesdf$Variant <- c(rep(c("Total","Alpha","Other"),length(sampletypes1)),rep(c("Alpha","Other"),length(sampletypes1)))
+
+beta0_mt <- logit_log_10_mt$coefficients[1]
+beta_mt <- logit_log_10_mt$coefficients[2]
+beta0_sal <- logit_log_10_saliva$coefficients[1]
+beta_sal <- logit_log_10_saliva$coefficients[2]
+
+prob_mt <- function(x) {
+  y <- exp(beta0_mt+beta_mt*log10(x))/(1+exp(beta0_mt+beta_mt*log10(x)))
+  y <- y %>% signif(2) %>% as.character()
+  return(y)
+}
+
+prob_saliva <- function(x) {
+  y <- exp(beta0_sal+beta_sal*log10(x))/(1+exp(beta0_sal+beta_sal*log10(x)))
+  y <- y %>% signif(2) %>% as.character()
+  return(y)
+}
+
+valuesdf$probmt <- valuesdf$RNAvalues %>% sapply(prob_mt)
+valuesdf$probsaliva <- valuesdf$RNAvalues %>% sapply(prob_saliva)
+
+valuesdf <- valuesdf %>% select(Level,`Sample Type`,Variant,RNAvalues,probmt,probsaliva)
+valuesdf <- valuesdf %>% rename(`RNA copies`=RNAvalues,`Probability based on MT model`=probmt,`Probability based on saliva model`=probsaliva)
+
+valuesdf$`Sample Type`[valuesdf$`Sample Type`=="Phone Swab"] <- "Fomite"
+valuesdf$`Sample Type`[valuesdf$`Sample Type`=="G-II Fine Aerosol"] <- "Fine (≤ 5 µm) Aerosol"
+valuesdf$`Sample Type`[valuesdf$`Sample Type`=="G-II Coarse Aerosol"] <- "Coarse (> 5 µm) Aerosol"
+write.csv(valuesdf,"../table_output/repo_table_s7_probability_culture.csv",row.names=F)
+```

@@ -1,0 +1,256 @@
+---
+title: "fig_s12_probability_culture"
+author: 
+  - "Jianyu Lai"
+  - "Don Milton"
+date: "6/28/2021; 7/24/2021"
+output:
+  html_document: default
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(skimr)
+library(ggpubr)
+```
+
+## use nonpaired sample per row set filtered for negsero and known culture status
+```{r}
+spr <- read.csv("../working_files/nonpaired_pcr_sx_spr.csv")
+spr <- spr %>% filter(pos_enrollment=="Negative" & culture_status %in% c("positive", "negative"))
+spr <- spr %>% mutate(log_av_quant = if_else(av_quant == 0, 0, log(av_quant)),
+                      log_10_av_quant = if_else (av_quant == 0, 0, log10(av_quant)),
+                      culture = if_else(culture_status=="positive", 1, 0))
+table(spr$culture_status, spr$culture)
+```
+logistic regression model for MTS
+```{r}
+mt <- spr %>% filter(sample_type=="Midturbinate Swab")
+
+logit_log_10_mt <- glm(culture ~ log_10_av_quant, data = mt, family = "binomial")
+mt_logit_log10_summary <-summary(logit_log_10_mt)
+mt_logit_log10_summary
+note_mt <- paste("Logistic regression model\n",
+              "           "," Coef"," SE","   z","    p","\n",
+              "Intercept ", 
+              round(mt_logit_log10_summary$coefficients[1],2),
+              round(mt_logit_log10_summary$coefficients[1,2],2),
+              round(mt_logit_log10_summary$coefficients[1,3],2),
+              round(mt_logit_log10_summary$coefficients[1,4],5),
+              "\n",
+              "log 10 RNA ", 
+              round(mt_logit_log10_summary$coefficients[2],2),
+              format(round(mt_logit_log10_summary$coefficients[2,2],2),nsmall=2),
+              "",
+              round(mt_logit_log10_summary$coefficients[2,3],2),round(mt_logit_log10_summary$coefficients[2,4],5)
+              )
+
+```
+logistic regresion model for saliva
+```{r}
+saliva <- spr %>% filter(sample_type=="Saliva")
+
+#natural log
+logit_saliva <- glm(culture ~ log_av_quant, data = saliva, family = "binomial")
+summary(logit_saliva)
+
+#log_10
+logit_log_10_saliva <- glm(culture ~ log_10_av_quant, data = saliva, family = "binomial")
+saliva_logit_log10_summary <- summary(logit_log_10_saliva)
+saliva_logit_log10_summary
+note_saliva <- paste("Logistic regression model\n",
+              "           ", " Coef", " SE", "   z", "    p","\n",
+              "Intercept ", 
+              round(saliva_logit_log10_summary$coefficients[1],2),
+              round(saliva_logit_log10_summary$coefficients[1,2],2),
+              round(saliva_logit_log10_summary$coefficients[1,3],2),
+              round(saliva_logit_log10_summary$coefficients[1,4],5),"\n",
+              "log 10 RNA ",
+              round(saliva_logit_log10_summary$coefficients[2],2),
+              format(round(saliva_logit_log10_summary$coefficients[2,2],2),nsmall=2),
+              "",
+              round(saliva_logit_log10_summary$coefficients[2,3],2),round(saliva_logit_log10_summary$coefficients[2,4],5)
+              )
+```
+
+```{r}
+#create vector of input average log10 RNA copies
+log10_N <- seq(0,10,1)
+
+#mt
+beta0_mt <- logit_log_10_mt$coefficients[1]
+beta_mt <- logit_log_10_mt$coefficients[2]
+prob_mt <- exp(beta0_mt+beta_mt*log10_N)/(1+exp(beta0_mt+beta_mt*log10_N))
+prob_mt <- signif(prob_mt,2)
+prob_mt_copy <- prob_mt/(10^log10_N)
+
+#saliva
+beta0_sal <- logit_log_10_saliva$coefficients[1]
+beta_sal <- logit_log_10_saliva$coefficients[2]
+prob_sal <- exp(beta0_sal+beta_sal*log10_N)/(1+exp(beta0_sal+beta_sal*log10_N))
+prob_sal <- signif(prob_sal,2)
+prob_sal_copy <- prob_sal/(10^log10_N)
+
+prob_pos <- cbind(log10_N, prob_mt, prob_sal, prob_mt_copy, prob_sal_copy)
+
+p_63 <- 1-exp(-1)
+p_50 <- 0.5
+TCID63_mt <- (log(p_63/(1-p_63))-beta0_mt)/beta_mt
+TCID50_mt <- (log(p_50/(1-p_50))-beta0_mt)/beta_mt
+
+TCID63_sal <- (log(p_63/(1-p_63))-beta0_sal)/beta_sal
+TCID50_sal <- (log(p_50/(1-p_50))-beta0_sal)/beta_sal
+
+prob_pos
+rbind(TCID50_mt, TCID63_mt, TCID50_sal, TCID63_sal)
+```
+Output with Table 2 values is in the Table S7 script now
+
+Plot based on a lot of closely spaced x values and predicted values from the regression
+```{r}
+#MTS
+mt_max <- max(mt$log_10_av_quant)
+mt_min <- min(mt$log_10_av_quant)
+x_mt <- seq(mt_min, mt_max, 0.001)
+beta0_mt <- logit_log_10_mt$coefficients[1]
+beta_mt <- logit_log_10_mt$coefficients[2]
+
+mt_impute <- data.frame(x_mt)
+mt_impute <- mt_impute %>% 
+  mutate(log_10_av_quant = x_mt)
+fit.pred.mt <- predict(logit_log_10_mt, newdata = mt_impute, se.fit = T,type = "response")
+
+mt_impute$prob <- fit.pred.mt$fit
+mt_impute$prob_se <- fit.pred.mt$se.fit
+
+mt_impute <- mt_impute %>% 
+  mutate(lower = prob - 2*prob_se, upper = prob + 2*prob_se)
+mt_impute <- mt_impute %>% mutate(lower=if_else(lower<0,0,lower),upper=if_else(upper>1,1,upper))
+
+mt$culture_color <- mt$culture_status %>% sapply(function(x) {if (x=="positive") {"red"} else {"black"}})
+mt_lot_10_plot_2 <- mt_impute %>% ggplot(aes(x=log_10_av_quant, y=prob))+
+  geom_line(aes(color = prob))+
+  geom_point(data = mt,aes(y=culture),color=mt$culture_color) +
+  geom_ribbon(aes(y=NULL, ymin=lower, ymax=upper),alpha=0.2)+
+  scale_color_continuous("Probability")+
+  annotate("text", x=0,y=.9,label=note_mt, hjust=0,family="mono",size=3)+
+  scale_x_continuous(breaks=c(0:10),limits = c(0,10))+
+  labs (x="Mid-turbinate swab (log10 RNA copies)", 
+        y="Probability positive\nCulture negative=0, positive=1")+
+  theme_bw()
+
+#Saliva
+sal_max <- max(saliva$log_10_av_quant)
+sal_min <- min(saliva$log_10_av_quant)
+x_sal <- seq(sal_min, sal_max, 0.001)
+beta0_sal <- logit_log_10_saliva$coefficients[1]
+beta_sal <- logit_log_10_saliva$coefficients[2]
+
+saliva_impute <- data.frame(x_sal)
+saliva_impute <- saliva_impute %>% 
+  mutate(log_10_av_quant = x_sal)
+fit.pred.sal <- predict(logit_log_10_saliva, newdata = saliva_impute, se.fit = T,type = "response")
+saliva_impute$prob <- fit.pred.sal$fit
+saliva_impute$prob_se <- fit.pred.sal$se.fit
+
+saliva_impute <- saliva_impute %>% 
+  mutate(lower =  prob - 2*prob_se, upper = prob + 2*prob_se)
+saliva_impute <-saliva_impute %>% mutate(lower=if_else(lower<0,0,lower),upper=if_else(upper>1,1,upper))
+
+saliva$culture_color <- saliva$culture_status %>% sapply(function(x) {if (x=="positive") {"red"} else {"black"}})
+saliva_lot_10_plot_2 <- saliva_impute %>% ggplot(aes(x=log_10_av_quant, y=prob))+
+  geom_line(aes(color=prob)) +
+  geom_point(data = saliva, aes(y=culture),color=saliva$culture_color) +
+  geom_ribbon(aes(y=NULL,ymin=lower,ymax=upper),alpha=0.2)+
+  scale_color_continuous("Probability")+
+  annotate("text",x=0,y=.9,label=note_saliva,hjust=0,family="mono",size=3)+
+  scale_x_continuous(breaks=c(0:10),limits = c(0,10))+
+  scale_y_continuous(breaks=c(0, 0.25, 0.50, 0.75, 1.00),limits = c(0,1))+
+  labs (x="Saliva (log10 RNA copies)", y="")+
+  theme_bw()
+
+log_10_plots_2 <- ggarrange (mt_lot_10_plot_2, saliva_lot_10_plot_2,
+                       labels = c("A", "B"),
+                       ncol=2, nrow=1,
+                       common.legend = T,
+                       legend = "right")
+log_10_plots_2
+ggsave(log_10_plots_2,filename="../figure_output/repo_fig_s12_culture_prob_log10RNA.png",device="png",width=11,height=7.77,units="in")
+```
+repo_fig_s12 as TIFF
+```{r}
+note_mt_tif <- paste("Logistic regression model\n",
+              "           ","Coef"," SE","    z","       p","\n",
+              "Int.     ", 
+              round(mt_logit_log10_summary$coefficients[1],2),
+              round(mt_logit_log10_summary$coefficients[1,2],2),
+              round(mt_logit_log10_summary$coefficients[1,3],2),
+              mt_logit_log10_summary$coefficients[1,4] %>% formatC(format="e",digits=1),
+              "\n",
+              "copies ", 
+              round(mt_logit_log10_summary$coefficients[2],2),
+              format(round(mt_logit_log10_summary$coefficients[2,2],2),nsmall=2),
+              "",
+              round(mt_logit_log10_summary$coefficients[2,3],2),mt_logit_log10_summary$coefficients[2,4] %>% formatC(format="e",digits=1)
+              )
+mt_lot_10_plot_2_manu <- mt_impute %>% ggplot(aes(x=log_10_av_quant, y=prob))+
+  geom_line(aes(color = prob))+
+  geom_point(data = mt,aes(y=culture),color=mt$culture_color,size=0.8) +
+  geom_ribbon(aes(y=NULL, ymin=lower, ymax=upper),alpha=0.2)+
+  scale_color_continuous("Probability")+
+  annotate("text", x=0,y=.9,label=print(note_mt_tif), hjust=0,family="arial",size=2.8)+
+  scale_x_continuous(breaks=c(0:10),limits = c(0,10))+
+  labs (x="Mid-turbinate swab (log10 RNA copies)", 
+        y="Probability positive\nCulture negative=0, positive=1",
+        family="Arial",
+        size=8)+
+  theme_bw() +
+  theme(axis.title.x = element_text(size=8,family="Arial"),
+        axis.title.y = element_text(size=8,family="Arial"),
+        legend.text=element_text(size=8),
+        legend.title = element_text(size=8),
+        axis.text.x = element_text(size=8, family="Arial"),
+        axis.text.y = element_text(size=8, family="Arial"),
+        plot.margin=unit(c(5,2.5,2.5,2.5),"mm"))
+
+note_saliva_tif <- paste("Logistic regression model\n",
+              "           ", " Coef", " SE", "    z", "         p","\n",
+              "Int.      ", 
+              round(saliva_logit_log10_summary$coefficients[1],2),
+              round(saliva_logit_log10_summary$coefficients[1,2],2),
+              round(saliva_logit_log10_summary$coefficients[1,3],2),
+              saliva_logit_log10_summary$coefficients[1,4] %>% formatC(format="e",digits=1),"\n",
+              "copies ",
+              round(saliva_logit_log10_summary$coefficients[2],2),
+              format(round(saliva_logit_log10_summary$coefficients[2,2],2),nsmall=2),
+              "",
+              round(saliva_logit_log10_summary$coefficients[2,3],2),saliva_logit_log10_summary$coefficients[2,4] %>% formatC(format="e",digits=1)
+              )
+
+saliva_lot_10_plot_2_manu <- saliva_impute %>% ggplot(aes(x=log_10_av_quant, y=prob))+
+  geom_line(aes(color=prob)) +
+  geom_point(data = saliva, aes(y=culture),color=saliva$culture_color,size=0.8) +
+  geom_ribbon(aes(y=NULL,ymin=lower,ymax=upper),alpha=0.2)+
+  scale_color_continuous("Probability")+
+  annotate("text",x=0,y=.9,label=note_saliva_tif,hjust=0,family="Arial",size=2.8)+
+  scale_x_continuous(breaks=c(0:10),limits = c(0,10))+
+  scale_y_continuous(breaks=c(0, 0.25, 0.50, 0.75, 1.00),limits = c(0,1))+
+  labs (x="Saliva (log10 RNA copies)", y="")+
+  theme_bw() +
+  theme(axis.title.x = element_text(size=8,family="Arial"),
+        axis.title.y = element_text(size=8,family="Arial"),
+        legend.text=element_text(size=8),
+        legend.title = element_text(size=8),
+        axis.text.x = element_text(size=8, family="Arial"),
+        axis.text.y = element_text(size=8, family="Arial"),
+        plot.margin=unit(c(5,2.5,2.5,2.5),"mm"))
+
+log_10_plots_2_manu <- ggarrange (mt_lot_10_plot_2_manu, saliva_lot_10_plot_2_manu,
+                       labels = c("A", "B"),
+                       ncol=2, nrow=1,
+                       common.legend = T,
+                       legend = "right")
+log_10_plots_2_manu
+ggsave(log_10_plots_2_manu,filename="../figure_output/tif/tif_raw/repo_fig_s12_culture_prob_log10RNA.tif",device="tiff",width=7,height=4.94,units="in",dpi=600)
+ggsave(log_10_plots_2_manu,filename="../figure_output/png_600/repo_fig_s12_culture_prob_log10RNA_png_600.png",device="png",width=7,height=4.94,units="in",dpi=600)
+```

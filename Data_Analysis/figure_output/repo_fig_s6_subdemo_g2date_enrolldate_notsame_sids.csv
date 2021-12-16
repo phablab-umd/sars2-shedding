@@ -1,0 +1,12 @@
+"study_id","tag","date_of_enrollment","pos_enrollment","firstg2date","real_onset","days_past_onset_at_enroll","days_past_onset_at_g2","g2date_minus_enrolldate"
+"56","Contact entry",2020-06-06,"Negative",2020-06-07,2020-06-02,4,5,1
+"57","Contact entry",2020-06-06,"Negative",2020-06-08,2020-06-03,3,5,2
+"58","Contact entry",2020-06-06,"Negative",2020-06-08,2020-06-07,-1,1,2
+"245","Contact entry",2020-09-18,"Negative",2020-09-21,2020-09-16,2,5,3
+"247","Contact entry",2020-09-21,"Negative",2020-09-22,2020-09-18,3,4,1
+"286","Contact entry",2020-10-09,"Positive",2020-10-14,2020-10-02,7,12,5
+"301","Contact entry",2020-10-23,"Positive",2020-10-26,2020-10-26,-3,0,3
+"424","Contact entry",2021-02-10,"Negative",2021-02-15,2021-02-08,2,7,5
+"462","Contact entry",2021-03-24,"Negative",2021-03-25,2021-03-24,0,1,1
+"478","Contact entry",2021-04-02,"Negative",2021-04-07,2021-03-28,5,10,5
+"484","Contact entry",2021-04-10,"Negative",2021-04-12,2021-04-08,2,4,2

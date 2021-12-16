@@ -1,0 +1,435 @@
+---
+title: "qPCRconvert"
+author: "Filbert Hong"
+date: "4/19/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(dplyr)
+library(aws.s3)
+library(readxl)
+library(ggplot2)
+```
+read all files
+```{r readfiles}
+objaccess <- Sys.getenv("OBJ_ACCESS_CATCH")
+objsecret <- Sys.getenv("OBJ_SECRET_CATCH")
+Sys.setenv("AWS_ACCESS_KEY_ID" = objaccess,
+          "AWS_SECRET_ACCESS_KEY" = objsecret,
+          "AWS_S3_ENDPOINT"="obj.umiacs.umd.edu",
+          "AWS_DEFAULT_REGION"="stopcovid-samples-listing"
+          )
+stopcovidsamples <- s3read_using(FUN=read.csv,stringsAsFactors=F,object="StopCOVIDsamples.csv",bucket="")
+allcsvfiles <- get_bucket_df("qpcr-results",bucket="") %>% filter(grepl("csv",Key)) %>% select(Key) %>% unlist()
+allexpsraw <- allcsvfiles %>% lapply(function(x) {s3read_using(FUN=read.csv,object=x,skip=14,stringsAsFactors=F,bucket="")})
+names(allexpsraw) <- allcsvfiles %>% gsub("qpcr-results/","",.) %>% substr(1,10)
+
+# moved local files to objbox
+# allcsvfiles <- list.files("well results") %>% subset(grepl("Well",.))
+# allexpsraw <- allcsvfiles %>% lapply(function(x) {read.csv(file=paste0("well results/",x),skip = 14,stringsAsFactors=F)})
+# names(allexpsraw) <- allcsvfiles %>% substr(1,10)
+
+# some extra samples (from screening) made its way into 6/29/20 file
+extrasamples <- c(252942:252945) %>% as.character()
+allexpsraw[["20200629_1"]] <- allexpsraw[["20200629_1"]] %>% filter(!(Sample.Name %in% extrasamples))
+allexps <- allexpsraw
+for (i in 1:length(allexps)) {
+  colnames(allexps[[i]]) <- colnames(allexps[[i]]) %>% tolower() %>% gsub("\\.","_",.)
+  allexps[[i]] <- allexps[[i]] %>% select(experiment_name,sample_name,target_name,cq,well)
+  allexps[[i]] <- allexps[[i]] %>% filter(target_name=="N gene")
+  
+  # some of these samples are combined samples X+Y+Z, need to split them
+  pcrmultisampleIDs <- allexps[[i]]$sample_name %>% subset(grepl("\\+",.)) %>% unique() %>% subset(!(grepl("lab",tolower(.))))
+  if (length(pcrmultisampleIDs)>0) {
+    for (q in pcrmultisampleIDs) {
+      qlist <- q %>% strsplit("\\+") %>% unlist()
+      j <- allexps[[i]] %>% filter(sample_name==q)
+      jnew <- data.frame()
+      for (jcount in 1:nrow(j)) {
+        for (qcount in qlist) {
+          k <- j[jcount,]
+          k$sample_name <- qcount
+          jnew <- jnew %>% bind_rows(k)
+        }
+      }
+    allexps[[i]] <- allexps[[i]] %>% filter(sample_name!=q)
+    allexps[[i]] <- allexps[[i]] %>% bind_rows(jnew)
+   }
+  }
+}
+
+allsamplenames <- allexps %>% lapply(function(x) {x %>% select(sample_name) %>% unlist() %>% unique()}) %>% unlist() %>% unique() %>% sort()
+standardruns <- allexps %>% lapply(function(x) {x %>% filter(grepl("std",tolower(sample_name)))})
+```
+multi1: “4 wells 2exp avg fitted to Std1” – Std3 from 20200620_1 and 20200623_2 whose Calc Log Qty come from fit of Std 1 on those days – see separate Notes pages
+```{r format standard}
+std1 <- standardruns %>% lapply(function(x) {x %>% filter(grepl("Std1",sample_name) & cq!="Undetermined")})
+std3 <- standardruns %>% lapply(function(x) {x %>% filter(grepl("Std3",sample_name) & cq!="Undetermined")})
+
+std1 <- std1 %>% subset(lapply(.,nrow)>0)
+std3 <- std3 %>% subset(lapply(.,nrow)>0)
+
+std1 <- std1 %>% lapply(function(x) {x %>% mutate(cq=as.numeric(cq))})
+std1 <- std1 %>% lapply(function(x) {x %>% mutate(log_qty=(sample_name %>% gsub("Lab-Std1","",.) %>% gsub ("1E","",.) %>% gsub("\\D+","",.) %>% as.numeric()))}) # copy number
+
+std3 <- std3 %>% lapply(function(x) {x %>% mutate(cq=as.numeric(cq))})
+# std3 <- std3 %>% lapply(function(x) {x %>% mutate(dil=(sample_name %>% gsub("Lab-Std3","",.) %>% gsub ("1E","",.) %>% gsub("\\D+","",.)))}) # dilution number
+# std3 <- std3 %>% lapply(function(x) {x %>% mutate(log_qty=(dil %>% as.numeric() %>% `*`(-1) %>% `+`(10)))}) # dilution to copy number
+std3 <- std3 %>% lapply(function(x) {x %>% mutate(dil=(sample_name %>% substr(regexpr("E",.)-1,regexpr("E",.)+3)))}) # dilution number
+std3 <- std3 %>% lapply(function(x) {x %>% mutate(log_qty=(((1e+10)/(dil %>% as.numeric())) %>% log10()))}) # dilution to copy number
+```
+Corrections for Std1
+6/20 and 6/23 std1 fit is whole range (1-6)
+8/10, 8/15, 9/3 std1 fits are only range 2-6 (important for multi2)
+8/15 and 9/3 are mislabeled, should be 0-6 instead of 1-7.
+```{r modify std1s}
+std1[["20200815_1"]]$log_qty <- std1[["20200815_1"]]$log_qty - 1
+std1[["20200903_2"]]$log_qty <- std1[["20200903_2"]]$log_qty - 1
+removelowest <- c("20200810_1","20200815_1","20200903_2")
+for (i in removelowest) {
+  std1[[i]] <- std1[[i]] %>% filter(log_qty!=1)
+}
+
+```
+First-order fits to everything
+```{r first order fits}
+std1fullmodels <- std1 %>% lapply(function(x) {lm(cq ~ log_qty, data=x)})
+#std1_fit <- std1 %>% lapply(function(x) {std1fullmodels[[x]]$coefficients}) %>% bind_rows()
+std1_fit <- names(std1) %>% lapply(function(x) {std1fullmodels[[x]]$coefficients}) %>% bind_rows()
+std1_fit$exp <- paste0("std1_",names(std1))
+std1_fit <- std1_fit %>% rename(b=`(Intercept)`,m=`log_qty`) %>% select(exp,b,m)
+
+std3fullmodels <- std3 %>% lapply(function(x) {lm(cq ~ log_qty, data=x)})
+std3_fit <- names(std3) %>% lapply(function(x) {std3fullmodels[[x]]$coefficients}) %>% bind_rows()
+#std3_fit <- std3 %>% lapply(function(x) {lm(x$cq ~ x$log_qty)$coefficients}) %>% bind_rows()
+std3_fit$exp <- paste0("std3_",names(std3))
+std3_fit <- std3_fit %>% rename(b=`(Intercept)`,m=`log_qty`) %>% select(exp,b,m)
+allfits <- bind_rows(std1_fit,std3_fit)
+```
+Multi-experiment fits
+
+multi1 fit: “4 wells 2exp avg fitted to Std1” – Std3 from 20200620_1 and 20200623_2 whose Calc Log Qty come from fit of Std 1 on those days – see separate Notes pages
+multi2 fit: Std3 Calc Log Qty values based on 3 Exp (Sheet 2.3, BO146:188) – 20200810_1 (fitted Sheet 1.3 Std1), 20200815_1 (fitted Sheet 1.4 Std1), 20200903_2 (fitted Sheet 1.5 Std1)
+multi3 fit: Std3N/Std3 Calc Log Qty values based on 4 Exp (Sheet 11.0) – 1/21/21, 1/28/21, 2/9/21, 2/10/21, averaged and fitted to Std1 for each day
+1/21, 1/28, 2/10 used 3N; 2/9 used 3
+```{r multiexp fits}
+# multi1
+# calculate the log_qty values of Std3 from 20200620_1 and 2000623_2 using fits of Std1 on each of those days
+
+std3[["20200620_1"]] <- std3[["20200620_1"]] %>% mutate(log_qty_std1=((cq-std1_fit$b[std1_fit$exp=="std1_20200620_1"])/std1_fit$m[std1_fit$exp=="std1_20200620_1"]))
+
+std3[["20200623_2"]] <- std3[["20200623_2"]] %>% mutate(log_qty_std1=((cq-std1_fit$b[std1_fit$exp=="std1_20200623_2"])/std1_fit$m[std1_fit$exp=="std1_20200623_2"]))
+
+# take log_qty_std1 from std3 for those two days, exclude log_qty=9 because that was done only on the earlier day (6/20)
+multi1_intermediate <- std3[["20200620_1"]] %>% bind_rows(std3[["20200623_2"]]) %>% filter(log_qty!=9) %>% arrange(desc(log_qty_std1))
+
+multi1_int_log_qty <- multi1_intermediate$log_qty %>% unique() %>% sort()
+multi1meanvals <- multi1_int_log_qty %>% sapply(function(x) {multi1_intermediate %>% filter(log_qty==x) %>% select(log_qty_std1) %>% unlist() %>% `^`(10,.) %>% mean() %>% log10()})
+
+# multi 2
+# calculate the log_qty values of Std3 from 20200810_1, 20200815_1, and 20200903_2 on those days
+multi2exps <- c("20200810_1","20200815_1","20200903_2")
+multi2_intermediate <- data.frame()
+for (i in multi2exps) {
+  std3[[i]] <- std3[[i]] %>% mutate(log_qty_std1=((cq-std1_fit$b[std1_fit$exp==paste0("std1_",i)])/std1_fit$m[std1_fit$exp==paste0("std1_",i)]))
+  multi2_intermediate <- multi2_intermediate %>% bind_rows(std3[[i]])
+}
+multi2_intermediate <- multi2_intermediate %>% arrange(desc(log_qty_std1))
+multi2_int_log_qty <- multi2_intermediate$log_qty %>% unique() %>% sort()
+
+multi2meanvals <- multi2_int_log_qty %>% sapply(function(x) {multi2_intermediate %>% filter(log_qty==x) %>% select(log_qty_std1) %>% unlist() %>% `^`(10,.) %>% mean() %>% log10()})
+
+# multi3
+# calculate the log_qty values of Std3 from 20210121_2, 20210128_2, 20210209_3, 20210210_2
+multi3exps <- c("20210121_2","20210128_2","20210209_3","20210210_2")
+multi3_intermediate <- data.frame()
+for (i in multi3exps) {
+  std3[[i]] <- std3[[i]] %>% mutate(log_qty_std1=((cq-std1_fit$b[std1_fit$exp==paste0("std1_",i)])/std1_fit$m[std1_fit$exp==paste0("std1_",i)]))
+  multi3_intermediate <- multi3_intermediate %>% bind_rows(std3[[i]])
+}
+multi3_intermediate <- multi3_intermediate %>% arrange(desc(log_qty_std1))
+
+multi3_intermediate <- multi3_intermediate %>% filter(grepl("3N",sample_name) | grepl("20210209",experiment_name))
+
+multi3_int_log_qty <- multi3_intermediate$log_qty %>% unique() %>% sort()
+
+multi3meanvals <- multi3_int_log_qty %>% sapply(function(x) {multi3_intermediate %>% filter(log_qty==x) %>% select(log_qty_std1) %>% unlist() %>% `^`(10,.) %>% mean() %>% log10()})
+```
+Generate the coefficients needed for each day's experiments:
+
+Fitting data is encoded in qPCRkey. Most of the fitting coefficients are generated by fitting Std3 of that day to multi1, multi2, multi3 (Std3 fitted to Std1 for several days, and then copy numbers averaged - chunks above)
+
+There were several days though where that was not done:
+
+i=4,5,22,23,24,25 (20200810_1,20200815_1,20210121_2,20210128_2,20210209_3,20210210_2) are fitting values are taken directly from Std1; didn't use Std3. That's "Std1 (direct)" in the qPCR key.
+
+i=6 (20200903_2)
+want 38.972 and -3.31, comes from fitting Std3 with averaged Std1-fit values (38.935 and -3.3065) (std1_fit)
+
+```{r fit coefficients for samples}
+qPCRkey <- read.csv(file="qPCR fitting key.csv",stringsAsFactors=F)
+allexpfits <- data.frame()
+allexpfitmodels <- list()
+stdusedforfitting <- list()
+for (i in 1:nrow(qPCRkey)) {
+  iexp <- qPCRkey$experiment[i]
+  ixlogcalc <- qPCRkey$x_log_calc[i]
+  irangelow <- qPCRkey$range_std3_low[i]
+  irangehigh <- qPCRkey$range_std3_high[i]
+  if (grepl("multi",ixlogcalc)) {
+    if (ixlogcalc=="multi1") {
+      i_log_qty <- multi1meanvals
+    }
+    if (ixlogcalc=="multi2") {
+      i_log_qty <- multi2meanvals
+    }
+    if (ixlogcalc=="multi3") {
+      i_log_qty <- multi3meanvals
+    }
+    j <- std3[[iexp]]
+    j$ilogqty <- j$log_qty %>% lapply(function(x) {if (x %in% c(1:length(i_log_qty))) {i_log_qty[x]} else {NA}}) %>% unlist()
+    j <- j %>% filter(log_qty %in% c(irangelow:irangehigh))
+    stdusedforfitting[[i]] <- j
+    allexpfitmodels[[i]] <- lm(cq ~ ilogqty,data=j)
+    k <- c(iexp,allexpfitmodels[[i]]$coefficients)
+    names(k) <- c("exp","b","m")
+    allexpfits <- allexpfits %>% bind_rows(k)
+  }
+  if (ixlogcalc=="Std1 (2-6)") {
+    p <- std3[[iexp]]
+    plogqty <- p$log_qty %>% unique() %>% sort() %>% subset(. %in% c(irangelow:irangehigh))
+    pmeanvalues <- plogqty %>% sapply(function(x) {p %>% filter(log_qty==x) %>% select(log_qty_std1) %>% unlist() %>% `^`(10,.) %>% mean() %>% log10()})
+    p$log_qty_std1_mean <- p$log_qty %>% sapply(function(x) {pmeanvalues[x]})
+    stdusedforfitting[[i]] <- p
+    allexpfitmodels[[i]] <- lm(cq ~ log_qty_std1_mean,data=p)
+    k <- c(iexp,allexpfitmodels[[i]]$coefficients)
+    names(k) <- c("exp","b","m")
+    allexpfits <- allexpfits %>% bind_rows(k)
+  }
+  if (ixlogcalc=="Std1 (direct)") {
+    #use std1 for that day directly
+    stdusedforfitting[[i]] <- std1[[iexp]]
+    allexpfitmodels[[i]] <- lm(cq ~ log_qty, data=std1[[iexp]])
+    k <- std1_fit %>% filter(grepl(iexp,exp)) %>% as.character()
+    names(k) <- c("exp","b","m")
+    k["exp"] <- iexp
+    allexpfits <- allexpfits %>% bind_rows(k)
+  }
+}
+names(allexpfitmodels) <- qPCRkey$experiment
+```
+Calculate rxn_quant.
+remember that the regressions directly give you log_rxn_quant; have to take the antilog
+```{r calculate rxn_quant}
+allsampleslist <- allexps %>% lapply(function(x) {x %>% filter(!grepl("lab|pool",tolower(sample_name)))})
+
+allsampleslist <- allsampleslist %>% subset(lapply(.,nrow)>0)
+for (i in 1:length(allsampleslist)) {
+  iexp <- names(allsampleslist[i])
+  i_m <- allexpfits$m[allexpfits$exp==iexp] %>% as.numeric()
+  i_b <- allexpfits$b[allexpfits$exp==iexp] %>% as.numeric()
+  allsampleslist[[i]]$log_rxn_quant <- allsampleslist[[i]]$cq %>% sapply(function(x) {if (x!="Undetermined") {(as.numeric(x) - i_b)/i_m} else {x}}) %>% as.character()
+  allsampleslist[[i]]$rxn_quant <- allsampleslist[[i]]$log_rxn_quant %>% sapply(function(x) {if (x!="Undetermined") {10^(as.numeric(x))} else {0}})
+}
+```
+upon comparing to "20210420 SARS2 RT-qPCR data for Jake.xlsx"
+Found that sheets 4-6 (8/10, 8/15, 9/3 were not being done correctly)
+Found that fits for sheets 30-34 (3/26, 4/6, 4/8, 4/13, 4/16) were inconsistent because of cut & paste error on the Jake sheet.
+
+assemble and merge in S and ORF1ab values
+```{r assemble final sheet}
+allsamples <- allsampleslist %>% bind_rows() 
+allsamples <- allsamples %>% rename(sample_id=sample_name,ct_ngene_qpcr=cq,exp_date=experiment_name) %>% select(well,sample_id,ct_ngene_qpcr,rxn_quant,exp_date)
+allsamples$helper <- paste(allsamples$sample_id,allsamples$well)
+
+allexpsrawdump <- allexpsraw %>% bind_rows()
+allexpsrawdump <- allexpsrawdump %>% select(Sample.Name,Well,Target.Name,Cq)
+allexpsrawdump <- allexpsrawdump %>% filter(!grepl("lab",tolower(Sample.Name)) & Target.Name %in% c("S gene","ORF1ab"))
+
+multisamples <- allexpsrawdump %>% filter(grepl("\\+",Sample.Name))
+head(multisamples)
+nrow(multisamples)
+# these samples need to be split apart and given their own row
+for (i in 1:nrow(multisamples)) {
+  j <- multisamples[i,]
+  knames <- j$Sample.Name %>% strsplit("\\+") %>% unlist()
+  k <- matrix(knames,ncol=1) %>% as.data.frame(stringsAsFactors=F)
+  colnames(k) <- "Sample.Name"
+  k[,c("Well","Target.Name","Cq")] <- j[,c("Well","Target.Name","Cq")]
+  allexpsrawdump <- allexpsrawdump %>% filter(!(Sample.Name==j$Sample.Name[1] &  Well==j$Well[1] & Target.Name==j$Target.Name[1]))
+  allexpsrawdump <- allexpsrawdump %>% bind_rows(k)
+}
+
+allexpsrawdump$helper <- paste(allexpsrawdump$Sample.Name,allexpsrawdump$Well)
+
+sgene <- allexpsrawdump %>% filter(Target.Name=="S gene") %>% select(helper,Cq) %>% rename(ct_sgene_qpcr=Cq)
+orfgene <- allexpsrawdump %>% filter(Target.Name=="ORF1ab") %>% select(helper,Cq) %>% rename(ct_orfgene_qpcr=Cq)
+nrow(allsamples)
+allsamples <- allsamples %>% left_join(sgene,by="helper")
+allsamples <- allsamples %>% left_join(orfgene,by="helper")
+nrow(allsamples)
+
+qpcrnew <- allsamples %>% select(exp_date,sample_id,ct_ngene_qpcr,ct_sgene_qpcr,ct_orfgene_qpcr,rxn_quant)
+qpcrnew$ct_ngene_qpcr[qpcrnew$ct_ngene_qpcr=="Undetermined"] <- "-1"
+qpcrnew$ct_sgene_qpcr[qpcrnew$ct_sgene_qpcr=="Undetermined"] <- "-1"
+qpcrnew$ct_orfgene_qpcr[qpcrnew$ct_orfgene_qpcr=="Undetermined"] <- "-1"
+```
+write to csv, but this eventually needs to go to sars-shedding-manuscript/source_data
+```{r write to file}
+qpcrfilename <- paste0("RT-qPCR_results_",Sys.Date() %>% format("%Y%m%d"),".csv")
+write.csv(qpcrnew,file=qpcrfilename,row.names=F)
+```
+create all std3 fits and multifit file export
+```{r multifits}
+multifitmat <- matrix(c(c(1:8),multi1meanvals,multi2meanvals,multi3meanvals),ncol=4) %>% as.data.frame()
+colnames(multifitmat) <- c("log_qty_nominal","multi1","multi2","multi3")
+write.csv(multifitmat,file="std3_multifits.csv",row.names=F)
+write.csv(allfits,file="std3_allfits.csv",row.names=F)
+```
+Create individual reports for each experiment day
+```{r figures for each fit}
+ggplotRegression <- function (fit) {
+  ggplot(fit$model, aes_string(x = names(fit$model)[2], y = names(fit$model)[1])) + 
+    geom_point() +
+    stat_smooth(method = "lm", col = "red") +
+    labs(title = paste("Adj R2 = ",signif(summary(fit)$adj.r.squared, 5),
+                       "Intercept =",signif(fit$coef[[1]],5 ),
+                      " Slope =",signif(fit$coef[[2]], 5),
+                      " P =",signif(summary(fit)$coef[2,4], 5)))
+}
+
+plotlist <- allexpfitmodels %>% lapply(ggplotRegression)
+
+# send all this to a public objbox
+Sys.setenv("AWS_ACCESS_KEY_ID" = objaccess,
+          "AWS_SECRET_ACCESS_KEY" = objsecret,
+          "AWS_S3_ENDPOINT"="obj.umiacs.umd.edu",
+          "AWS_DEFAULT_REGION"="stopcovid-open"
+          )
+
+for (i in 1:length(plotlist)) {
+  ifilename <- paste0(names(plotlist)[i],"_regression.png")
+  ggsave(plotlist[[i]],filename=paste0("temp/",ifilename))
+  put_object(file=paste0("temp/",ifilename),object=paste0(ifilename),bucket="")
+}
+```
+generate sample quant tables
+```{r sample quants}
+avgresults <- list()
+allreplicatemats <- list()
+for (i in 1:length(allsampleslist)) {
+  iexp <- names(allsampleslist)[i]
+  isamplelist <- allsampleslist[[i]] %>% left_join(stopcovidsamples  %>% select(sample_id,study_id,sample_type,date_collected_sg),by=c("sample_name"="sample_id"))
+  isamplelist$sample_quant <- isamplelist %>% apply(1,function(x) {if (grepl("saliva",tolower(x["sample_type"]))) {as.numeric(x["rxn_quant"])*125/6} else {as.numeric(x["rxn_quant"])*25}})
+  iresultsmat <- isamplelist %>% select(study_id,date_collected_sg,sample_name,sample_type,well,cq,rxn_quant,sample_quant) %>% rename(subject_id=study_id,sample_date=date_collected_sg)
+  iresultsmatsamples <- iresultsmat$sample_name %>% unique() %>% sort()
+  
+  iresultsmatsamplequantaverage <- iresultsmatsamples %>% sapply(function(x) {iresultsmat %>% filter(sample_name==x) %>% select(sample_quant) %>% unlist() %>% mean()})
+  iresultsmatsamplequantSD <- iresultsmatsamples %>% sapply(function(x) {iresultsmat %>% filter(sample_name==x) %>% select(sample_quant) %>% unlist() %>% sd()})
+  iresultsmatavg <- iresultsmat %>% select(subject_id,sample_date,sample_name,sample_type) %>% unique()
+  iresultsmatavg$mean_sample_quant <- iresultsmatsamplequantaverage[iresultsmatavg$sample_name]
+  iresultsmatavg$sd_sample_quant <- iresultsmatsamplequantSD[iresultsmatavg$sample_name]
+  iresultsmatavg <- iresultsmatavg %>% arrange(subject_id,sample_date,sample_type,sample_name)
+  
+  iresultsmat <- iresultsmat %>% arrange(subject_id,sample_date,sample_name)
+  iresultsmat$sample_quant <- iresultsmat$sample_quant %>% sapply(function(x) {if (x>0) {formatC(x,format="e",digits=2)} else {x}})
+  iresultsmat$rxn_quant <- iresultsmat$rxn_quant %>% sapply(function(x) {if (x>0) {formatC(x,format="e",digits=2)} else {x}})
+  
+  iresultsmatavg$mean_sample_quant <- iresultsmatavg$mean_sample_quant %>% sapply(function(x) {if (x>0) {formatC(x,format="e",digits=2)} else {x}})
+  iresultsmatavg$sd_sample_quant <- iresultsmatavg$sd_sample_quant %>% sapply(function(x) {if (x>0) {formatC(x,format="e",digits=2)} else {x}})
+  
+  allreplicatemats[[i]] <- iresultsmat
+  avgresults[[i]] <- iresultsmatavg
+}
+```
+generate html with javascript subsections
+```{r html}
+allexpnames <- names(plotlist)
+maketable1 <- function (x) {
+  htmltable <- "<table border=1>\n"
+  htmltable <- htmltable %>% paste0("<tr align=center>")
+  for (i in 1:ncol(x)) {
+    htmltable <- htmltable %>% paste0("<td>",colnames(x)[i],"</td>")
+  }
+  htmltable <- htmltable %>% paste0("</tr>\n")
+  for (j in 1:nrow(x)) {
+    htmltable <- htmltable %>% paste0("<tr align=center>")
+    for (k in 1:ncol(x)) {
+      htmltable <- htmltable %>% paste0("<td>",x[j,k],"</td>")
+    }
+    htmltable <- htmltable %>% paste0("</tr>\n")
+  }
+  htmltable <- htmltable %>% paste0("</table><BR>\n")
+  return(htmltable)
+}
+
+htmlreport <- "<HTML>\n"
+#jquery for show hide elements
+htmlreport <- htmlreport %>% paste0("<head><script src='https://code.jquery.com/jquery-3.5.1.min.js'></script>\n")
+htmlreport <- htmlreport %>% paste0("<script>\n")
+htmlreport <- htmlreport %>% paste0("$(document).ready(function() {\n")
+htmlreport <- htmlreport %>% paste0("$(\"select\").change(function() {\n")
+htmlreport <- htmlreport %>% paste0("$(this).find(\"option:selected\").each(function(){\n")
+htmlreport <- htmlreport %>% paste0("var optionValue = $(this).attr(\"value\");\n")
+htmlreport <- htmlreport %>% paste0("if(optionValue){\n$(\".block\").not(\".\" + optionValue).hide();\n")
+htmlreport <- htmlreport %>% paste0("$(\".\" + optionValue).show();")
+htmlreport <- htmlreport %>% paste0("} else {\n")
+htmlreport <- htmlreport %>% paste0("$(\".block\").hide();\n}\n});\n}).change();\n});\n")
+htmlreport <- htmlreport %>% paste0("</script></head>\n")
+
+htmlreport <- htmlreport %>% paste0("<BODY>\n")
+htmlreport <- htmlreport %>% paste0("<div>\n")
+
+#head section
+htmlreport <- htmlreport %>% paste0("<B>qPCR experiment summaries</B><BR>\n")
+htmlreport <- htmlreport %>% paste0("<B>Source code:</B> <A HREF=\"https://gitlab.umiacs.umd.edu/catch/sars-shedding-manuscript/-/blob/master/source_data/qPCR%20fits%20and%20sample%20quants.Rmd\" target='_blank'>qPCR fits and sample quants.Rmd</A></B><BR>\n")
+
+htmlreport <- htmlreport %>% paste0("<B>Time of report: ",Sys.time() %>% as.POSIXct(tz="America/New_York"),"</B><P>\n")
+
+# dropdown
+htmlreport <- htmlreport %>% paste0("<select>\n")
+htmlreport <- htmlreport %>% paste0("<option><B>Choose experiment day to display:</B></option>\n")
+for (i in 1:length(allexpnames)) {
+  htmlreport <- htmlreport %>% paste0("<option value='",allexpnames[i],"'>",allexpnames[i],"</option>\n")
+}
+htmlreport <- htmlreport %>% paste0("</select><P>\n")
+htmlreport <- htmlreport %>% paste0("</div>\n")
+htmlreport <- htmlreport %>% paste0("<P><HR><P>\n")
+
+for (i in 1:length(allexpnames)) {
+  htmlreport <- htmlreport %>% paste0("<div class='",allexpnames[i]," block'>\n")
+  htmlreport <- htmlreport %>% paste0("Experiment: ",allexpnames[i],"<BR>\n")
+  htmlreport <- htmlreport %>% paste0("Number of subjects: ",length(unique(avgresults[[i]]$subject_id)),"<BR>\n")
+  htmlreport <- htmlreport %>% paste0("Number of samples: ",nrow(avgresults[[i]]),"<P>\n")
+  
+  htmlreport <- htmlreport %>% paste0("<P><HR><P>\n")
+  htmlreport <- htmlreport %>% paste0("Fit model:<BR>\n")
+  htmlreport <- htmlreport %>% paste0("<table border=1><tr valign='top'><td>\n")
+  htmlreport <- htmlreport %>% paste0(maketable1(allexpfitmodels[[i]]$model),"</td>\n")
+  htmlreport <- htmlreport %>% paste0("<td><IMG SRC=\"https://obj.umiacs.umd.edu/stopcovid-open/",paste0(allexpnames[i],"_regression.png"),"\", width=\"720 px\"><BR></td></tr></table>\n")
+  htmlreport <- htmlreport %>% paste0(maketable1(stdusedforfitting[[i]]))
+  htmlreport <- htmlreport %>% paste0("<P><HR><P>\n")
+  htmlreport <- htmlreport %>% paste0("Samples (means):<BR>\n")
+  htmlreport <- htmlreport %>% paste0(maketable1(avgresults[[i]]))
+  htmlreport <- htmlreport %>% paste0("<P><HR><P>\n")
+  htmlreport <- htmlreport %>% paste0("Samples (full replicate listing):<BR>\n")
+  htmlreport <- htmlreport %>% paste0(maketable1(allreplicatemats[[i]]))
+  htmlreport <- htmlreport %>% paste0("</div>\n")
+}
+
+
+htmlreport <- htmlreport %>% paste0("</BODY>\n</HTML>")
+write(htmlreport,"StopCOVIDqPCRexperimentsummary.html")
+```
+write to object store
+```{r obj write}
+objaccess <- Sys.getenv("OBJ_ACCESS_CATCH")
+objsecret <- Sys.getenv("OBJ_SECRET_CATCH")
+Sys.setenv("AWS_ACCESS_KEY_ID" = objaccess,
+          "AWS_SECRET_ACCESS_KEY" = objsecret,
+          "AWS_S3_ENDPOINT"="obj.umiacs.umd.edu",
+          "AWS_DEFAULT_REGION"="stopcovid-samples-listing"
+          )
+s3write_using(htmlreport,FUN=write,object="StopCOVIDqPCRexperimentsummary.html",bucket="")
+```

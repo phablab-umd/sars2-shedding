@@ -1,0 +1,292 @@
+---
+title: "figs_s3_s4_s5_temp_sx_barplot"
+author:
+  - "Sanmi Adenaiye"
+  - "Filbert Hong"
+date: "4/28/2021; 7/9/2021; 7/10/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(stringr)
+library(shadowtext)
+set.seed(42)
+```
+S3/S4: Oral temp and symptoms at different visits (full data set)
+S5: Bar plots by days from onset (sample per row, nonpaired, filtered for seronegative)
+```{r}
+keysubjects <- read.csv("../working_files/keysubjectsplus.csv",stringsAsFactors=F)
+keysubjectsseroneg <- keysubjects %>% filter(pos_enrollment=="Negative") %>% pull(study_id)
+cov_pcr_sera <- readRDS("../../analytical_cleaned_datasets/cov_pcr_sera_20210805.RDS")
+spr <- read.csv("../working_files/nonpaired_pcr_sx_spr.csv")
+nonpaired_pred_negsero_spr <- spr %>% filter(pos_enrollment=="Negative")
+
+dF <- cov_pcr_sera$pcr_screen %>% filter(study_id %in% keysubjectsseroneg)
+
+symptomfields <- c("nose_run","nose_stuf","sneeze","throat_sr","earache","malaise","headache","mj_ache","sw_fever_chill","nausea","loa","vomit","diarrhea","chest_tight","sob","cough")
+dF1 <- dF %>% filter(grepl("contact|shedding",redcap_event_name) & !grepl("home",redcap_event_name)) %>% select(study_id,redcap_event_name,oral_temp,all_of(symptomfields)) %>% unique()
+all_data <- dF1
+
+#Use redcap event to identify which visit was initial or repeats
+all_data$Event <- all_data$redcap_event_name %>% sapply(function(x) {
+  if (grepl("shedding_initial",x)) {
+    "Shedding assessment visit 1"
+  } else {
+    if (grepl("shedding_repeat",x)) {
+      "Shedding assessment visit 2"
+    } else {
+      if (grepl("contact",x) & grepl("initial|repeat",x)) {
+        "Contact screening"
+      } else {
+        NA
+      }
+    }
+  }
+})
+
+is.na(all_data$Event) %>% any()
+
+
+ur_score <- c("nose_run","nose_stuf", "sneeze", "throat_sr", "earache")
+lr_score <- c("chest_tight", "sob", "cough")
+sys_score <- c("malaise", "headache", "mj_ache", "sw_fever_chill")
+gi_score <- c("loa", "vomit", "diarrhea", "nausea")
+
+
+all_data$syst_sc <- all_data[,all_of(sys_score)] %>% apply(1,sum)
+all_data$gi_sc <- all_data[,all_of(gi_score)] %>% apply(1,sum)
+all_data$lr_sc <- all_data[,all_of(lr_score)] %>% apply(1,sum)
+all_data$ur_sc <- all_data[,all_of(ur_score)] %>% apply(1,sum)
+
+newDF <- all_data %>% select(oral_temp,syst_sc,gi_sc,lr_sc,ur_sc,"Event") %>% pivot_longer(cols = c(-"Event"),values_to="Score")
+
+#set the maximum for each composite score
+newDF$inter <- NA
+newDF$inter[newDF$name=="syst_sc"] <- 12
+newDF$inter[newDF$name=="gi_sc"] <- 12
+newDF$inter[newDF$name=="lr_sc"] <- 9
+newDF$inter[newDF$name=="ur_sc"] <- 15
+newDF$inter[newDF$name=="oral_temp"] <- 38
+
+newDF$name[newDF$name=="oral_temp"]<-"Oral temperature"
+```
+box scatter for temperature
+```{r}
+temp <- newDF %>% filter(name=="Oral temperature")
+p <- theme(axis.title.x = element_text(size=12, face="bold", colour = "black"),
+           axis.title.y = element_text(size=12, face="bold", colour = "black"),
+           axis.line.x = element_line(color="black", size = 0.3),
+           axis.line.y = element_line(color="black", size = 0.3),
+           axis.text.y = element_text(size = 10, face = "bold"),
+           axis.text.x = element_text(size=10,face = "bold",angle = 60,hjust = 1),
+           legend.position = "none")
+
+m <- ggplot(temp, aes(x = factor(Event), Score, color=factor(Event))) +
+  geom_boxplot(position = position_dodge(0.5)) +
+  geom_point(aes(color=factor(Event)),
+             position=position_jitter(width=0.3,height=0.01, seed=42)) +
+  labs(y = "Temperature in °Celsius", x = "Visit type") +
+  theme_bw() +
+  p +
+  scale_x_discrete(labels = function(x) str_wrap(str_replace_all(x, "foo" , " "),width = 10)) +
+  facet_wrap(.~name, scales = "free") +
+  geom_hline(data = temp,aes(yintercept=inter, colour="#386CB0"),linetype="dashed") +
+  scale_color_manual(values = c("red","#B03838","black","#386CB0"))
+
+m
+ggsave(plot=m,filename="../figure_output/repo_fig_s3_boxplot_temp.png",width=5.5,height=8.6,units="in")
+```
+fig_s3 as TIFF
+```{r}
+p_manu <- theme(axis.title.x = element_text(size=12, face="bold", colour = "black",family="arial"),
+           axis.title.y = element_text(size=12, face="bold", colour = "black",family="arial"),
+           axis.line.x = element_line(color="black", size = 0.3),
+           axis.line.y = element_line(color="black", size = 0.3),
+           axis.text.y = element_text(size = 10, face = "bold",family="arial"),
+           axis.text.x = element_text(size=10,face = "bold",angle = 60,hjust = 1,family="arial"),
+           legend.position = "none")
+
+m_manu <- ggplot(temp, aes(x = factor(Event), Score, color=factor(Event))) +
+  geom_boxplot(position = position_dodge(0.5)) +
+  geom_point(aes(color=factor(Event)),
+             position=position_jitter(width=0.3,height=0.01, seed=42)) +
+  labs(y = "Temperature in °Celsius", x = "Visit type") +
+  theme_bw() +
+  p_manu +
+  scale_x_discrete(labels = function(x) str_wrap(str_replace_all(x, "foo" , " "),width = 10)) +
+  facet_wrap(.~name, scales = "free") +
+  geom_hline(data = temp,aes(yintercept=inter, colour="#386CB0"),linetype="dashed") +
+  scale_color_manual(values = c("red","#B03838","black","#386CB0")) +
+  theme(legend.text=element_text(family="arial"),
+        strip.text = element_text(size =12,family="arial"))
+
+m_manu
+ggsave(plot=m_manu,filename="../figure_output/tif/tif_raw/repo_fig_s3_boxplot_temp_manuscript.tif",device="tiff",width=4.8,height=7.51,units="in",dpi=600)
+ggsave(plot=m_manu,filename="../figure_output/png_600/repo_fig_s3_boxplot_temp_png_600.png",device="png",width=4.8,height=7.51,units="in",dpi=600)
+```
+box scatter for symptoms
+```{r}
+sc <- newDF %>% filter(name %in% c("syst_sc","gi_sc","lr_sc","ur_sc"))
+plot_names <- c(`lr_sc` = "Lower respiratory symptoms score",
+                `ur_sc`= "Upper respiratory symptoms score",
+                `syst_sc`= "Systemic symptoms score",
+                `gi_sc` = "Gastrointestinal symptoms score")
+
+plot_labeller <- function(variable,value) {
+  return(plot_names[value])
+}
+
+l <- ggplot(sc, aes(x = factor(Event), Score, color=factor(Event))) +
+  geom_boxplot(position = position_dodge(0.5)) +
+  geom_point(aes(color=factor(Event)),
+             position=position_jitter(width=0.3,height=0.01,seed=42)) +
+  labs(y = "Symptom score", x = "Visit type") +
+  theme_bw() +
+  p +
+  scale_x_discrete(labels = function(x) str_wrap(str_replace_all(x, "foo" , " "),width = 10)) +
+  facet_wrap(.~name, scales = "free",labeller=plot_labeller) +
+  geom_hline(data = sc,aes(yintercept=inter, colour="blue"),linetype="dashed") +
+  scale_color_manual(values = c("red","#B03838","black","#386CB0"))
+l
+ggsave(plot=l,filename="../figure_output/repo_fig_s4_boxplot_sx.png",width=5.5,height=8.6,units="in")
+```
+repo_fig_s4 tiff
+```{r}
+l_manu <- ggplot(sc, aes(x = factor(Event), Score, color=factor(Event))) +
+  geom_boxplot(position = position_dodge(0.5)) +
+  geom_point(aes(color=factor(Event)),
+             position=position_jitter(width=0.3,height=0.01,seed=42)) +
+  labs(y = "Symptom score", x = "Visit type") +
+  theme_bw() +
+  p_manu +
+  scale_x_discrete(labels = function(x) str_wrap(str_replace_all(x, "foo" , " "),width = 10)) +
+  facet_wrap(.~name, scales = "free",labeller=plot_labeller) +
+  geom_hline(data = sc,aes(yintercept=inter, colour="blue"),linetype="dashed") +
+  scale_color_manual(values = c("red","#B03838","black","#386CB0"))+
+  theme(legend.text=element_text(family="arial"),
+    strip.text = element_text(size=8,family="arial"))
+l_manu
+ggsave(plot=l_manu,filename="../figure_output/tif/tif_raw/repo_fig_s4_boxplot_sx_manuscript.tif",device="tiff",width=4.81,height=7.52,units="in",dpi=600)
+ggsave(plot=l_manu,filename="../figure_output/png_600/repo_fig_s4_boxplot_sx_manuscript.png",device="png",width=4.81,height=7.52,units="in",dpi=600)
+```
+S5: Bar plots by days from onset  
+Seronegative at enrollment by number of days post onset of illness
+```{r}
+dF <- nonpaired_pred_negsero_spr
+dF$days_past_onset[which(is.na(dF$days_past_onset))] <- "ASx"
+
+#subjects without symptoms hence no sx onset
+unique(dF$study_id[which(dF$days_past_onset=="ASx")])
+
+dF_days_summary <- dF %>% group_by(sample_type) %>% select(days_past_onset) %>% table()
+dF_days_summary
+
+categ_day <- unique(dF$days_past_onset)
+
+dF_days_summary %>% as.data.frame.matrix() %>% mutate(total=rowSums(.[1:length(categ_day)]),type=rownames(dF_days_summary))
+```
+bins for days past onset
+```{r}
+dF$bin <- NA  
+dF$bin[which(dF$days_past_onset <0)] <- "Before symptom onset"
+dF$bin[which(dF$days_past_onset %in% c(0,1))] <- "0 - 1"
+dF$bin[which(dF$days_past_onset %in% c(2,3))] <- "2 - 3"
+dF$bin[which(dF$days_past_onset %in% c(4,5))] <- "4 - 5"
+dF$bin[which(dF$days_past_onset %in% c(6,7))] <- "6 - 7"
+dF$bin[which(dF$days_past_onset =="ASx")] <- "ASx"
+dF$bin[which(is.na(dF$bin))] <-">7"
+unique(dF$study_id[which(dF$bin=="ASx")]) #check that the Asx sids are the same
+
+categ <- c("Before symptom onset","0 - 1","2 - 3","4 - 5","6 - 7",">7","ASx")
+dF$bin<-factor(dF$bin,levels = categ)
+
+dF_bin_summary <- dF %>% group_by(sample_type) %>% select(bin) %>% table()
+dF_bin_summary
+
+dF_bin_summary %>% as.data.frame.matrix() %>% mutate(total=rowSums(.[1:length(categ)]),type=rownames(dF_bin_summary))
+```
+Change name and sample types for figure
+```{r}
+dcf_mts_bin <- dF %>%  filter(sample_type %in% c("Phone Swab","Saliva","Midturbinate Swab","G-II Fine Aerosol mask","G-II Coarse Aerosol mask","G-II Fine Aerosol","G-II Coarse Aerosol"))
+dcf_mts_bin$sample_type <- dcf_mts_bin$sample_type %>% as.character()
+dcf_mts_bin$sample_type[which(dcf_mts_bin$sample_type=="Midturbinate Swab")] <- "Mid-turbinate swab"
+dcf_mts_bin$sample_type[which(dcf_mts_bin$sample_type=="Phone Swab")] <- "Phone swab"
+dcf_mts_bin$sample_type[which(dcf_mts_bin$sample_type=="G-II Coarse Aerosol mask")] <- "Coarse aerosol with mask"
+dcf_mts_bin$sample_type[which(dcf_mts_bin$sample_type=="G-II Fine Aerosol mask")] <- "Fine aerosol with mask"
+dcf_mts_bin$sample_type[which(dcf_mts_bin$sample_type=="G-II Coarse Aerosol")] <- "Coarse aerosol"
+dcf_mts_bin$sample_type[which(dcf_mts_bin$sample_type=="G-II Fine Aerosol")] <- "Fine aerosol"
+
+# Count n per sample type to include in plot label
+dcf_mts_bin <- dcf_mts_bin %>% group_by(sample_type) %>% mutate(sample_type_n=paste0(sample_type," ", "(n"," = ",n(),")"))
+```
+
+Order sample types correctly to display n in facet
+```{r}
+ordered_levels <- c("Mid-turbinate swab","Saliva","Phone swab","Coarse aerosol with mask","Fine aerosol with mask","Coarse aerosol","Fine aerosol")
+current_order <- unique(dcf_mts_bin$sample_type_n) 
+current_order_1 <- current_order %>% strsplit(" \\(") %>% sapply(head,1)
+b <- ordered_levels %>% sapply(function(x) {which(x==current_order_1)})
+# percent positive per bin using any_rep_lod1
+dcf_mts_bin_long <- dcf_mts_bin %>% group_by(sample_type_n,bin, any_rep_lod1) %>% summarise(count = n()) %>% mutate(perc = count/sum(count))
+dcf_mts_bin_long$sample_type_n <- factor(dcf_mts_bin_long$sample_type_n,levels=current_order[b])
+```
+Plot bars with percent result stacked
+```{r}
+barplot_bin_nomask <- dcf_mts_bin_long %>%
+  filter(!grepl("with mask",sample_type_n)) %>% # exclude samples with mask
+  ggplot(aes(color-"black",x = factor(bin), y = count, label= paste0(round(perc*100,digits = 0),"%"), fill = factor(any_rep_lod1))) +
+  geom_bar(stat="identity", color="black",width = 0.7, position ="stack") +
+  geom_shadowtext(size = 3, position = position_stack(vjust = 0.5), 
+                  fontface="bold", color="black", bg.color="white")+
+  labs(x = "Days from symptom onset", y = "Number of samples obtained", fill = "qRT-PCR") +
+  theme_bw() + 
+  p +
+  scale_fill_manual(labels=c("Negative","Positive"),values =c("#386CB0","#B03838")) + # was #B0C4DE, #FF6347
+  facet_wrap(.~sample_type_n,nrow=1) +
+  theme(strip.text.x = element_text(size = 12, color = "black", face = "bold"),
+        legend.title = element_text(face = "bold"),
+        legend.text = element_text(face = "bold"),
+        axis.title.x = element_text(size=12, face="bold", colour = "black"),
+        axis.title.y = element_text(size=12, face="bold", colour = "black"),
+        axis.line.x = element_line(color="black", size = 0.3),
+        axis.line.y = element_line(color="black", size = 0.3),
+        axis.text.y = element_text(size = 12, face = "bold"),
+        axis.text.x = element_text(size=12,face = "bold"),
+        legend.position = "bottom")
+
+barplot_bin_nomask
+
+ggsave(plot=barplot_bin_nomask,filename="../figure_output/repo_fig_s5_histogram_sample_count.png",width=13.5,height=4.5,units="in")
+```
+repo_fig_s5 as TIFF
+```{r}
+barplot_bin_nomask_manu <- dcf_mts_bin_long %>%
+  filter(!grepl("with mask",sample_type_n)) %>% # exclude samples with mask
+  ggplot(aes(color-"black",x = factor(bin), y = count, label= paste0(round(perc*100,digits = 0),"%"), fill = factor(any_rep_lod1)),text=element_text(size=2.8,family="Arial")) +
+  geom_bar(stat="identity", color="black",width = 0.7, position ="stack") +
+  geom_shadowtext(size = 1.9, position = position_stack(vjust = 0.5), 
+                  fontface="bold", color="black", bg.color="white",family="Arial")+
+  labs(x = "Days from symptom onset", y = "Number of samples obtained", fill = "qRT-PCR") +
+  theme_bw() + 
+  scale_fill_manual(labels=c("Negative","Positive"),values =c("#386CB0","#B03838")) + # was #B0C4DE, #FF6347
+  facet_wrap(.~sample_type_n,nrow=1) +
+  theme(strip.text.x = element_text(size = 8, color = "black", face = "bold",family="Arial"),
+        legend.title = element_text(face = "bold",family="Arial",size=8),
+        legend.text = element_text(face = "bold",family="Arial",size=8),
+        axis.title.x = element_text(size=8, face="bold", colour = "black",family="Arial"),
+        axis.title.y = element_text(size=8, face="bold", colour = "black",family="Arial"),
+        axis.line.x = element_line(color="black", size = 0.3),
+        axis.line.y = element_line(color="black", size = 0.3),
+        axis.text.y = element_text(size = 8, face = "bold",family="Arial"),
+        axis.text.x = element_text(size=8,face = "bold",family="Arial",angle=60,vjust=0.6),
+        legend.position = "bottom"
+        )
+
+barplot_bin_nomask_manu
+ggsave(plot=barplot_bin_nomask_manu,filename="../figure_output/tif/tif_raw/repo_fig_s5_histogram_sample_count_manuscript.tif",device="tiff",width=9,height=3,units="in",dpi=600)
+ggsave(plot=barplot_bin_nomask_manu,filename="../figure_output/png_600/repo_fig_s5_histogram_sample_count_png_600.png",device="png",width=9,height=3,units="in",dpi=600)
+```

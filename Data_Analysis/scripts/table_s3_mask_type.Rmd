@@ -1,0 +1,57 @@
+---
+title: "table_s3_mask_type"
+author: "Jianyu Lai"
+date: "6/21/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+```
+
+## data: paired rpr filtered for seronegative
+```{r}
+rpr <- read.csv("../working_files/paired_pcr_sx_rpr.csv")
+paired_rpr <- rpr %>% filter(pos_enrollment=="Negative")
+```
+
+```{r}
+fine_paired <- paired_rpr %>% filter(sample_type %in% c("G-II Fine Aerosol","G-II Fine Aerosol mask"))
+length(unique(fine_paired$study_id))
+table(unique(fine_paired %>% select(study_id, sample_date, mask_yn, mask_type))$mask_type)
+
+coarse_paired <- paired_rpr %>% filter(sample_type %in% c("G-II Coarse Aerosol", "G-II Coarse Aerosol mask"))
+length(unique(coarse_paired$study_id))
+table(unique(coarse_paired %>% select(study_id, sample_date, mask_yn, mask_type))$mask_type)
+
+# at replicate level
+table(fine_paired$mask_type)
+table(coarse_paired$mask_type)
+```
+mask types:
+1 = homemade mask
+2 = surgical mask
+3 = other comercial mask
+4 = B2 mask
+5 = mask provided by UMD
+8 = other
+```{r}
+masktypes <- paired_rpr$mask_type %>% unique() %>% sort()
+finemasktypes <- masktypes %>% sapply(function(x) {fine_paired %>% filter(x==mask_type) %>% select(study_id,sample_date,mask_yn,mask_type) %>% unique() %>% nrow()})
+coarsemasktypes <- masktypes %>% sapply(function(x) {coarse_paired %>% filter(x==mask_type) %>% select(study_id,sample_date,mask_yn,mask_type) %>% unique() %>% nrow()})
+all(finemasktypes==coarsemasktypes) # same results for each
+names(finemasktypes) <- masktypes
+finemasktypes["clothdouble"] <- finemasktypes["1"]+finemasktypes["5"]+finemasktypes["8"]
+finemasktypes["surgical"] <- finemasktypes["2"]
+finemasktypes["KN95"] <- finemasktypes["3"]
+masktypes1 <- c("clothdouble","surgical","KN95")
+finemasktypespercentage <- (finemasktypes/ (sum(finemasktypes[masktypes1]))) %>% `*`(100) %>% round(0)
+
+output1 <- paste0(finemasktypes[masktypes1]," (",finemasktypespercentage[masktypes1],"%)") %>% matrix(ncol=length(.)) %>% as.data.frame()
+colnames(output1) <- masktypes1
+output1$`Without mask` <- finemasktypes["no mask"]
+output1 <- output1 %>% rename(`Cloth or double mask`=clothdouble,`Surgical mask`=surgical)
+output1
+write.csv(output1,"../table_output/repo_table_s3_mask_type.csv",row.names=F)
+```

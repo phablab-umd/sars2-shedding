@@ -1,0 +1,41 @@
+---
+title: "ncovrcmain-deident"
+author: "Filbert Hong"
+date: "January 13, 2021"
+output: html_document
+---
+transfer rcmain, deidentify, save to repository
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(aws.s3)
+```
+load rcmain
+```{r load rcmain}
+# put the keys you use to access the ncov-rc bucket here:
+objaccess <- Sys.getenv("OBJ_ACCESS_FHH")
+objsecret <- Sys.getenv("OBJ_SECRET_FHH")
+
+Sys.setenv("AWS_ACCESS_KEY_ID" = objaccess,
+           "AWS_SECRET_ACCESS_KEY" = objsecret,
+           "AWS_S3_ENDPOINT"="obj.umiacs.umd.edu"
+           )
+Sys.setenv("AWS_DEFAULT_REGION"="ncov-rc")
+rcmain <- s3read_using(FUN=readRDS,object="ncovrcmain.RData",bucket='')
+rcmeta <- s3read_using(FUN=readRDS,object="ncovrcmainmeta.RData",bucket='')
+rcdt <- s3read_using(FUN=readRDS,object="ncovrcdt.RData",bucket='')
+```
+deidentify
+```{r deidentify}
+identfields <- rcmeta %>% filter(identifier=="y") %>% select(field_name) %>% unlist()
+rcmain1 <- rcmain
+rcmain1[,identfields] <- NULL
+rcmain1 <- rcmain1 %>% filter(!grepl("test",tolower(subject_id)))
+saveRDS(rcmain1,file="ncovrcmain-deid.RData")
+
+rcdt1 <- rcdt
+rcdt1[,c("fname","lname","email_addr","mobile")] <- NULL
+rcdt1 <- rcdt1 %>% filter(!grepl("test",tolower(subject_id)))
+saveRDS(rcdt1,file="ncovrcdt-deid.RData")
+
+```

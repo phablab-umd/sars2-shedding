@@ -1,0 +1,192 @@
+---
+title: "table_s2_subanalysis_for_table3"
+author: "Jianyu Lai"
+date: "6/23/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(Matrix)
+library(mvtnorm)
+library(lme4)
+library(lmec)
+library(tidyverse)
+source("z_create_matrix.R")
+set.seed(42)
+```
+## data: nonpaired rpr and spr sets filtered for seronegative participants
+```{r}
+rpr_nonpaired <- read.csv("../working_files/nonpaired_pcr_sx_rpr.csv")
+rpr <- rpr_nonpaired %>% filter(pos_enrollment=="Negative")
+rpr <- rpr %>% mutate(sgene = factor(S.gene.dropout),
+          days_past_onset = as.numeric(days_past_onset),
+          dpo = if_else(!is.na(days_past_onset), days_past_onset, -1))
+rpr$cens <- rpr$cens %>% as.factor()
+
+spr_nonpaired <- read.csv("../working_files/nonpaired_pcr_sx_spr.csv")
+spr <- spr_nonpaired %>% filter(pos_enrollment=="Negative")
+```
+Using spr to subset the sample_quant values (at sample level) for mt and saliva that will be used as predictors for later analysis.
+Create subsets specific to MTS and saliva
+```{r}
+mt <- spr %>% filter(sample_type == "Midturbinate Swab")
+mt <- mt %>% mutate(mt_av_quant = av_quant)
+mt <- mt %>% mutate(log_mt = if_else(mt_av_quant==0, 0, log(mt_av_quant)))
+mt <- mt %>% select(log_mt, mt_av_quant, study_id, sample_date)
+length(unique(mt$study_id))
+
+saliva <- spr %>% filter (sample_type == "Saliva")
+saliva <- saliva %>% mutate(sal_av_quant = av_quant)
+saliva <- saliva %>% mutate (log_sal = if_else(sal_av_quant==0, 0, log(sal_av_quant)))
+saliva <- saliva %>% select (log_sal, sal_av_quant, study_id, sample_date)
+length(unique(saliva$study_id))
+
+# Add sample-level mt and saliva values to the rpr so we can use these variables as predictors for later analysis
+
+sal_rpr <- rpr %>% filter(sample_type == "Saliva") %>% left_join(mt, by=c("study_id"="study_id", "sample_date"="sample_date"))
+length(unique(sal_rpr$study_id))
+length(unique(sal_rpr$sample_id))
+
+mt_rpr <- rpr %>% filter(sample_type == "Midturbinate Swab") %>% left_join(saliva, by=c("study_id"="study_id", "sample_date"="sample_date"))
+
+length(unique(mt_rpr$study_id))
+length(unique(mt_rpr$sample_id))
+```
+median and IQR for mt and saliva sample quantities  
+```{r}
+# mt
+signif(summary(mt_rpr$sample_quant), 2)
+
+# IQR for the log value
+mt_rpr <- mt_rpr %>% mutate(log_mt_rpr = if_else(sample_quant==0, 0, log(sample_quant)))
+IQR(mt_rpr$log_mt_rpr)
+log_mt_IQR <- IQR(mt_rpr$log_mt_rpr) 
+
+# saliva
+signif(summary(sal_rpr$sample_quant),2)
+
+# IQR for the log value
+sal_rpr <- sal_rpr %>% mutate(log_sal_rpr = if_else(sample_quant==0, 0, log(sample_quant)))
+IQR(sal_rpr$log_sal_rpr)
+log_sal_IQR <- IQR(sal_rpr$log_sal_rpr) 
+```
+
+#LMECs for MT
+Z matrix, cluster, cens vector, yL
+```{r}
+Z_mt_rpr<- z_create_matrix(mt_rpr)
+cluster_mt_rpr <- as.numeric(factor(mt_rpr$study_id))
+cens_mt_rpr <- mt_rpr$cens
+yL_mt_rpr <- mt_rpr$mdfy_sample_quant %>% log()
+```
+
+Unadjusted analysis for MT
+```{r}
+vars_mt_lmec <- c("sgene","log_sal","age_entry","dpo","gi","lr","sys","ur")
+est_ci_mt_list <- list()
+for (j in vars_mt_lmec) {
+  print(paste0("BIVARIATE ANALYSIS FOR mt AND ",j))
+  # use lmer() to output the matrices
+  lm <- lmer (yL_mt_rpr ~ (1|study_id) + (1|study_id:sample_date) + eval(parse(text=j)), data=mt_rpr)
+  x_matrix <- getME(lm, "X")
+  fit_ML <- lmec(yL=yL_mt_rpr, cens=cens_mt_rpr, X=x_matrix, Z=Z_mt_rpr, cluster=cluster_mt_rpr, maxstep = 200, varstruct = "unstructured", method = "ML")
+  est <- fit_ML$beta[2]
+  se <- sqrt(diag(fit_ML$varFix))[2]
+  up <- est+1.96*se
+  low <- est-1.96*se
+  est_ci_mt_list[[j]] <- c(j, est, low, up)
+  names(est_ci_mt_list[[j]]) <- c("varname","beta_lmec","ci_low","ci_high")
+}
+est_ci_mt_df <- bind_rows(est_ci_mt_list)
+est_ci_mt_df
+```
+
+#LMECs for saliva
+Z matrix, cluster, cens vector, yL
+```{r}
+Z_sal_rpr<- z_create_matrix(sal_rpr)
+cluster_sal_rpr <- as.numeric(factor(sal_rpr$study_id))
+cens_sal_rpr <- sal_rpr$cens
+yL_sal_rpr <- sal_rpr$mdfy_sample_quant %>% log()
+```
+Unadjusted analysis for sal
+```{r}
+vars_sal_lmec <- c("sgene","log_mt","age_entry","dpo","gi","lr","sys","ur")
+est_ci_sal_list <- list()
+for (j in vars_sal_lmec) {
+  print(paste0("BIVARIATE ANALYSIS FOR sal AND ",j))
+  # use lmer() to output the matrices
+  lm <- lmer (yL_sal_rpr ~ (1|study_id) + (1|study_id:sample_date) + eval(parse(text=j)), data=sal_rpr)
+  x_matrix <- getME(lm, "X")
+  fit_ML <- lmec(yL=yL_sal_rpr, cens=cens_sal_rpr, X=x_matrix, Z=Z_sal_rpr, cluster=cluster_sal_rpr, maxstep = 200, varstruct = "unstructured", method = "ML")
+  est <- fit_ML$beta[2]
+  se <- sqrt(diag(fit_ML$varFix))[2]
+  up <- est+1.96*se
+  low <- est-1.96*se
+  est_ci_sal_list[[j]] <- c(j, est, low, up)
+  names(est_ci_sal_list[[j]]) <- c("varname","beta_lmec","ci_low","ci_high")
+}
+est_ci_sal_df <- bind_rows(est_ci_sal_list)
+est_ci_sal_df
+```
+
+create IQR adjustment values
+these are multiplied into the power component of an exponential, so essentially 1 = no adjustment
+these are needed for table 3, so save to working files
+```{r}
+IQRadjustlist <- list()
+
+IQRadjustlist[["log_sal"]] <- log_sal_IQR
+IQRadjustlist[["log_mt"]] <- log_mt_IQR
+IQRadjustlist[["sgene"]] <- 1
+IQRadjustlist[["cough_count"]] <- 1
+IQRadjustlist[["age_entry"]] <- 10
+IQRadjustlist[["dpo"]] <- 1
+IQRadjustlist[["gi"]] <- 1
+IQRadjustlist[["lr"]] <- 1.2
+IQRadjustlist[["sys"]] <- 3
+IQRadjustlist[["ur"]] <- 2
+
+saveRDS(IQRadjustlist,file="../working_files/IQRadjustlist.RDS")
+```
+
+```{r}
+exptransform <- function(x) {
+  y <- exp(x) %>% signif(2)
+  return(y)
+}
+
+est_ci_sal_df$iqradjust <- est_ci_sal_df$varname %>% sapply(function(x) {IQRadjustlist[[x]]})
+est_ci_sal_df$beta_1 <- ((est_ci_sal_df$beta_lmec %>% as.numeric())*(est_ci_sal_df$iqradjust)) %>% sapply(exptransform)
+est_ci_sal_df$ci_low_1 <- ((est_ci_sal_df$ci_low %>% as.numeric())*(est_ci_sal_df$iqradjust)) %>% sapply(exptransform)
+est_ci_sal_df$ci_high_1 <- ((est_ci_sal_df$ci_high %>% as.numeric())*(est_ci_sal_df$iqradjust)) %>% sapply(exptransform)
+est_ci_sal_df$predict1 <- est_ci_sal_df[,c("beta_1","ci_low_1","ci_high_1")] %>% apply(1,function(x) {paste0(x["beta_1"]," (",x["ci_low_1"],", ",x["ci_high_1"],")")})
+
+est_ci_mt_df$iqradjust <- est_ci_mt_df$varname %>% sapply(function(x) {IQRadjustlist[[x]]})
+est_ci_mt_df$beta_1 <- ((est_ci_mt_df$beta_lmec %>% as.numeric())*(est_ci_mt_df$iqradjust)) %>% sapply(exptransform)
+est_ci_mt_df$ci_low_1 <- ((est_ci_mt_df$ci_low %>% as.numeric())*(est_ci_mt_df$iqradjust)) %>% sapply(exptransform)
+est_ci_mt_df$ci_high_1 <- ((est_ci_mt_df$ci_high %>% as.numeric())*(est_ci_mt_df$iqradjust)) %>% sapply(exptransform)
+est_ci_mt_df$predict1 <- est_ci_mt_df[,c("beta_1","ci_low_1","ci_high_1")] %>% apply(1,function(x) {paste0(x["beta_1"]," (",x["ci_low_1"],", ",x["ci_high_1"],")")})
+
+table_s2_output <- est_ci_mt_df %>% select(varname,predict1) %>% rename(`MT Unadjusted Estimates`=predict1)
+table_s2_output <- table_s2_output %>% full_join(est_ci_sal_df %>% select(varname,predict1), by="varname") %>% rename(`Saliva Unadjusted Estimates`=predict1)
+
+tableorder <- c("sgene","age_entry","dpo","log_mt","log_sal","gi","lr","sys","ur")
+table_s2_output_1 <- matrix(tableorder,ncol=1) %>% as.data.frame(stringsAsFactors=F)
+colnames(table_s2_output_1) <- "varname"
+table_s2_output_1 <- table_s2_output_1 %>% left_join(table_s2_output,by="varname")
+table_s2_output_1[is.na(table_s2_output_1)] <- "-"
+table_s2_output_1$varname[table_s2_output_1$varname=="sgene"] <- "Alpha Variant"
+table_s2_output_1$varname[table_s2_output_1$varname=="age_entry"] <- "Age"
+table_s2_output_1$varname[table_s2_output_1$varname=="dpo"] <- "Day post-symptom onset"
+table_s2_output_1$varname[table_s2_output_1$varname=="log_mt"] <- "Log mid-turbinate swab"
+table_s2_output_1$varname[table_s2_output_1$varname=="log_sal"] <- "Log saliva"
+table_s2_output_1$varname[table_s2_output_1$varname=="ur"] <- "Upper respiratory symptoms"
+table_s2_output_1$varname[table_s2_output_1$varname=="lr"] <- "Lower respiratory symptoms"
+table_s2_output_1$varname[table_s2_output_1$varname=="gi"] <- "Gastrointestinal symptoms"
+table_s2_output_1$varname[table_s2_output_1$varname=="sys"] <- "Systemic symptoms"
+table_s2_output_1
+
+write.csv(table_s2_output_1,file="../table_output/repo_table_s2_alpha_variant_effect.csv",row.names = F)
+```

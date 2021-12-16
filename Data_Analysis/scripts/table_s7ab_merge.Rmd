@@ -1,0 +1,42 @@
+---
+title: "table_s7a_s7b_merge"
+author: "Filbert Hong"
+date: "7/21/2021"
+output: html_document
+---
+Creates manuscript table 2, which is repo_table_s7a and repo_table_s7b combined
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+```
+
+```{r read files}
+table_s7a <- read.csv(file="../table_output/repo_table_s7a_alpha_only_viral_quant.csv",stringsAsFactors=F)
+table_s7b <- read.csv(file="../table_output/repo_table_s7b_non_alpha_viral_quant.csv",stringsAsFactors=F)
+
+table_s7a$table <- "s7a"
+table_s7b$table <- "s7b"
+table_s7a$rownumber <- c(1:nrow(table_s7a))
+table_s7b$rownumber <- c(1:nrow(table_s7b))
+
+table_s7a$variant_type <- "Alpha"
+table_s7b$variant_type <- "Other"
+
+table_s7ab <- table_s7a %>% bind_rows(table_s7b)
+table_s7ab <- table_s7ab %>% arrange(rownumber,table)
+
+table_s7ab <- table_s7ab %>% relocate(variant_type,.after=Sample.Type)
+
+table_s7ab$table <- NULL
+table_s7ab$rownumber <- NULL
+table_s7ab$Culture.n.N.....Positive. <- NULL
+table_s7ab$GSD <- NULL
+table_s7ab <- table_s7ab %>% filter(!grepl("mask",Sample.Type))
+colnames(table_s7ab) <- colnames(table_s7ab) %>% gsub("\\."," ",.)
+table_s7ab <- table_s7ab %>% rename(Variant=variant_type,`GM (95% CI)`=`GM  95  CI `)
+table_s7ab
+```
+
+```{r write table}
+write.csv(table_s7ab,file="../table_output/repo_table_s7ab_merged.csv",row.names=F)
+```

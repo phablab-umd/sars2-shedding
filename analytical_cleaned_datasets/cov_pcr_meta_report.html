@@ -1,0 +1,177 @@
+<HTML>
+<head><script src='https://code.jquery.com/jquery-3.5.1.min.js'></script>
+<script>
+$(document).ready(function() {
+$("select").change(function() {
+$(this).find("option:selected").each(function(){
+var optionValue = $(this).attr("value");
+if(optionValue){
+$(".block").not("." + optionValue).hide();
+$("." + optionValue).show();} else {
+$(".block").hide();
+}
+});
+}).change();
+});
+</script></head>
+<BODY>
+<div>
+<B>cov_pcr_sera_20210805.RDS</B><BR>
+<B>Source code:</B> <A HREF="https://gitlab.umiacs.umd.edu/catch/sars-shedding-manuscript/-/blob/master/analytical_cleaned_datasets/cov_pcr_meta.Rmd" target='_blank'>cov_pcr_meta.Rmd</A></B><BR>
+<B>Time of report: 2021-08-13 13:41:45</B><P>
+cov_pcr_sera_20210805.RDS is a list of data frames: demohist, pcr_screen, qpcr_allsamples, sero1.<P>
+<select>
+<option><B>Choose data frame:</B></option>
+<option value='demohist'>demohist</option>
+<option value='pcr_screen'>pcr_screen</option>
+<option value='qpcr_allsamples'>qpcr_allsamples</option>
+<option value='sero1'>sero1</option>
+</select><P>
+</div>
+<P><HR><P>
+<div class='demohist block'>
+Data frame: demohist<BR>
+<table border=1>
+<tr align=center><td><B>Variable name</B></td><td><B>Variable class</B></td><td><B>Are there NAs in this field?</B></td><td><B>Possible values or range of values</B></td><td><B>Notes</B></td></tr>
+<tr align=center><td>study_id</td><td>character</td><td>FALSE</td><td>1 to 494</td><td>(none)</td></tr>
+<tr align=center><td>age_entry</td><td>numeric</td><td>TRUE</td><td>7 to 83</td><td>ineligible or people who did not put in a correct date were set to NA</td></tr>
+<tr align=center><td>sex_birth</td><td>factor</td><td>FALSE</td><td>0<BR>1<BR>8<BR>9</td><td>0 = female<BR>1 = male<BR>8 = uncertain<BR>9 = decline</td></tr>
+<tr align=center><td>alc_week</td><td>numeric</td><td>TRUE</td><td>0 to 41</td><td>NA means decline or don’t know</td></tr>
+<tr align=center><td>drinks_p_day</td><td>numeric</td><td>TRUE</td><td>1 to 10</td><td>subject id 182 put in drinks_p_day = 41 was set to NA<BR>NA means decline or don’t know</td></tr>
+<tr align=center><td>cigarette_ever</td><td>factor</td><td>FALSE</td><td>0<BR>1<BR>9</td><td>Have you ever smoked cigarettes?<BR>(no means less than 20 packs or 12 oz of tobacco in a lifetime or less than 1 cigarette a day for 1 year)<BR>0 = No<BR>1 = Yes<BR>9 = Decline</td></tr>
+<tr align=center><td>singing_lessons</td><td>factor</td><td>TRUE</td><td>0<BR>1<BR>9<BR>NA</td><td>Have you ever taken voice or singing lessons?<BR>0 = No<BR>1 = Yes<BR>9 = Decline<BR>NAs occur for arms where the question was not activated (yet)</td></tr>
+<tr align=center><td>singing_ensemble</td><td>factor</td><td>TRUE</td><td>0<BR>1<BR>9<BR>NA</td><td>Do you sing (or have you ever sung, for at least a year) in a choir/chorus, quartet, or other ensemble with other singers?<BR>0 = No<BR>1 = Yes<BR>9 = Decline<BR>NAs occur for arms where the question was not activated (yet)</td></tr>
+<tr align=center><td>latino</td><td>factor</td><td>FALSE</td><td>0<BR>1<BR>9</td><td>0 = Not Hispanic or Latino<BR>1 = Hispanic or Latino<BR>9 = Decline</td></tr>
+<tr align=center><td>other_race</td><td>character</td><td>TRUE</td><td>Hispanic<BR>Jewish<BR>Jewish/Iranian<BR>Lebanese<BR>Mexican<BR>Middle Eastern<BR>NA</td><td>Participants were set asked to name other race, but most of these are corrected to White</td></tr>
+<tr align=center><td>tag</td><td>factor</td><td>FALSE</td><td>Case entry<BR>Contact entry<BR>IR entry<BR>Surveillance entry</td><td>Indicates which arm in redcap the record resides in</td></tr>
+<tr align=center><td>cri</td><td>logical</td><td>FALSE</td><td>FALSE<BR>TRUE</td><td>1 = participant indicated yes to history of any of asthma, allerg, copd, cf, bronchitis, emphys, lung_other<BR>0 = No</td></tr>
+<tr align=center><td>drinks_p_week</td><td>numeric</td><td>TRUE</td><td>0 to 40</td><td>drinks_p_day times alc_week</td></tr>
+<tr align=center><td>race</td><td>character</td><td>FALSE</td><td>American Indian or Alaska Native<BR>Asian Indian<BR>Asian Indian-Other Asian<BR>Black or African American<BR>Black or African American-Asian Indian<BR>Black or African American-Korean<BR>Chinese<BR>Chinese-Other Asian<BR>Decline<BR>Don't Know<BR>Filipino<BR>Japanese<BR>Korean<BR>Other Asian<BR>Other race<BR>Vietnamese<BR>White<BR>White-American Indian or Alaska Native<BR>White-Asian Indian<BR>White-Black or African American<BR>White-Chinese<BR>White-Filipino<BR>White-Other Asian<BR>White-Other Pacific Islander</td><td>(none)</td></tr>
+<tr align=center><td>multiracial</td><td>logical</td><td>FALSE</td><td>FALSE<BR>TRUE</td><td>checked off more than one race box</td></tr>
+<tr align=center><td>bmi</td><td>numeric</td><td>TRUE</td><td>16 to 43.9</td><td>NAs will occur if the participant never visited the clinic (i.e. arm 1)</td></tr>
+<tr align=center><td>nose_run_ret</td><td>numeric</td><td>TRUE</td><td>0 to 2</td><td>from Symptom Card Retrospective<BR>NAs will occur if the participant never visited the clinic (i.e. arm 1)</td></tr>
+<tr align=center><td>nose_stuf_ret</td><td>numeric</td><td>TRUE</td><td>0 to 3</td><td>from Symptom Card Retrospective<BR>NAs will occur if the participant never visited the clinic (i.e. arm 1)</td></tr>
+<tr align=center><td>sneeze_ret</td><td>numeric</td><td>TRUE</td><td>0 to 2</td><td>from Symptom Card Retrospective<BR>NAs will occur if the participant never visited the clinic (i.e. arm 1)</td></tr>
+<tr align=center><td>throat_sr_ret</td><td>numeric</td><td>TRUE</td><td>0 to 3</td><td>from Symptom Card Retrospective<BR>NAs will occur if the participant never visited the clinic (i.e. arm 1)</td></tr>
+<tr align=center><td>earache_ret</td><td>numeric</td><td>TRUE</td><td>0 to 3</td><td>from Symptom Card Retrospective<BR>NAs will occur if the participant never visited the clinic (i.e. arm 1)</td></tr>
+<tr align=center><td>chest_tight_ret</td><td>numeric</td><td>TRUE</td><td>0 to 3</td><td>from Symptom Card Retrospective<BR>NAs will occur if the participant never visited the clinic (i.e. arm 1)</td></tr>
+<tr align=center><td>sob_ret</td><td>numeric</td><td>TRUE</td><td>0 to 3</td><td>from Symptom Card Retrospective<BR>NAs will occur if the participant never visited the clinic (i.e. arm 1)</td></tr>
+<tr align=center><td>cough_ret</td><td>numeric</td><td>TRUE</td><td>0 to 3</td><td>from Symptom Card Retrospective<BR>NAs will occur if the participant never visited the clinic (i.e. arm 1)</td></tr>
+<tr align=center><td>malaise_ret</td><td>numeric</td><td>TRUE</td><td>0 to 3</td><td>from Symptom Card Retrospective<BR>NAs will occur if the participant never visited the clinic (i.e. arm 1)</td></tr>
+<tr align=center><td>headache_ret</td><td>numeric</td><td>TRUE</td><td>0 to 3</td><td>from Symptom Card Retrospective<BR>NAs will occur if the participant never visited the clinic (i.e. arm 1)</td></tr>
+<tr align=center><td>mj_ache_ret</td><td>numeric</td><td>TRUE</td><td>0 to 3</td><td>from Symptom Card Retrospective<BR>NAs will occur if the participant never visited the clinic (i.e. arm 1)</td></tr>
+<tr align=center><td>sw_fever_chill_ret</td><td>numeric</td><td>TRUE</td><td>0 to 3</td><td>from Symptom Card Retrospective<BR>NAs will occur if the participant never visited the clinic (i.e. arm 1)</td></tr>
+<tr align=center><td>loa_ret</td><td>numeric</td><td>TRUE</td><td>0 to 3</td><td>from Symptom Card Retrospective<BR>NAs will occur if the participant never visited the clinic (i.e. arm 1)</td></tr>
+<tr align=center><td>vomit_ret</td><td>numeric</td><td>TRUE</td><td>0 to 1</td><td>from Symptom Card Retrospective<BR>NAs will occur if the participant never visited the clinic (i.e. arm 1)</td></tr>
+<tr align=center><td>diarrhea_ret</td><td>numeric</td><td>TRUE</td><td>0 to 3</td><td>from Symptom Card Retrospective<BR>NAs will occur if the participant never visited the clinic (i.e. arm 1)</td></tr>
+<tr align=center><td>nausea_ret</td><td>numeric</td><td>TRUE</td><td>0 to 3</td><td>from Symptom Card Retrospective<BR>NAs will occur if the participant never visited the clinic (i.e. arm 1)</td></tr>
+<tr align=center><td>taste_smell_yn_covid_ret</td><td>factor</td><td>TRUE</td><td>0<BR>1<BR>9<BR>NA</td><td>from Symptom Card Retrospective<BR>NAs will occur if the participant never visited the clinic (i.e. arm 1)</td></tr>
+<tr align=center><td>sx_med_care_ret</td><td>factor</td><td>TRUE</td><td>0<BR>1<BR>9<BR>NA</td><td>from Symptom Card Retrospective<BR>NAs will occur if the participant never visited the clinic (i.e. arm 1)</td></tr>
+<tr align=center><td>ur_ret</td><td>numeric</td><td>TRUE</td><td>0 to 9</td><td>sum of c("nose_run_ret","nose_stuf_ret", "sneeze_ret", "throat_sr_ret", "earache_ret")</td></tr>
+<tr align=center><td>lr_ret</td><td>numeric</td><td>TRUE</td><td>0 to 7</td><td>sum of c("chest_tight_ret", "sob_ret", "cough_ret")</td></tr>
+<tr align=center><td>sys_ret</td><td>numeric</td><td>TRUE</td><td>0 to 12</td><td>sum of c("malaise_ret", "headache_ret", "mj_ache_ret", "sw_fever_chill_ret")</td></tr>
+<tr align=center><td>gi_ret</td><td>numeric</td><td>TRUE</td><td>0 to 10</td><td>sum of c("loa_ret", "vomit_ret", "diarrhea_ret", "nausea_ret")</td></tr>
+<tr align=center><td>real_onset</td><td>Date</td><td>TRUE</td><td>2020-05-31 to 2021-04-23</td><td>most likely symptom onset date, includes manual corrections<BR>NAs will occur if the participant never exhibited symptoms of COVID-19</td></tr>
+<tr align=center><td>date_of_enrollment</td><td>Date</td><td>TRUE</td><td>2020-05-05 to 2021-04-30</td><td>first clinic visit</td></tr>
+<tr align=center><td>fever_ever</td><td>logical</td><td>TRUE</td><td>FALSE<BR>TRUE<BR>NA</td><td>temp &ge; 37.8 ever reported<BR>NA will occur if the participant never reported a temperature (i.e. no clinic visits, or simply declined to answer that part of the daily symptom survey)</td></tr>
+<tr align=center><td>vacc_status</td><td>character</td><td>FALSE</td><td>got first shot<BR>no info<BR>not vaccinated</td><td>reported at least one covid-19 vaccination shot</td></tr>
+<tr align=center><td>vaccdate1_1</td><td>Date</td><td>TRUE</td><td>2020-12-01 to 2021-05-05</td><td>possible earliest date of first covid-19 shot<BR>NA will occur if there is no vaccination info</td></tr>
+<tr align=center><td>vaccdate1_2</td><td>Date</td><td>TRUE</td><td>2020-12-31 to 2021-05-27</td><td>possible latest date of first covid-19 shot<BR>NA will occur if there is no vaccination info</td></tr>
+<tr align=center><td>seroconvert</td><td>factor</td><td>TRUE</td><td>0<BR>1<BR>2<BR>3<BR>9<BR>NA</td><td>merged from sero1<BR>0 = initial negative, convalescent negative<BR>1 = initial negative, convalescent positive<BR>2 = initial positive, convalescent negative<BR>3 = initial positive, convalescent positive<BR>9 = only did one blood draw, or did two blood draws but assays not done/complete<BR>NA = probably did no visits (i.e. part of arm 1)</td></tr>
+<tr align=center><td>pos_enrollment</td><td>character</td><td>FALSE</td><td>Negative<BR>never gave blood<BR>Positive<BR>unknown</td><td>positive for SARS-CoV-2 antigen at the time of first blood draw</td></tr>
+</table><BR>
+</div>
+<div class='pcr_screen block'>
+Data frame: pcr_screen<BR>
+<table border=1>
+<tr align=center><td><B>Variable name</B></td><td><B>Variable class</B></td><td><B>Are there NAs in this field?</B></td><td><B>Possible values or range of values</B></td><td><B>Notes</B></td></tr>
+<tr align=center><td>tac_id</td><td>character</td><td>FALSE</td><td>numerous identifiers</td><td>(none)</td></tr>
+<tr align=center><td>study_id</td><td>character</td><td>FALSE</td><td>3 to 507</td><td>(none)</td></tr>
+<tr align=center><td>sample_date</td><td>Date</td><td>FALSE</td><td>2020-05-08 to 2021-07-27</td><td>(none)</td></tr>
+<tr align=center><td>redcap_event_name</td><td>character</td><td>FALSE</td><td>contact_home_sampl_arm_1<BR>contact_home_sampl_arm_3<BR>contact_initial_arm_1<BR>contact_initial_arm_3<BR>contact_repeat_arm_1<BR>contact_repeat_arm_3<BR>driveby_saliva_arm_1<BR>ir_followup_arm_1<BR>ir_followup_arm_2<BR>ir_followup_arm_3<BR>shedding_initial_arm_1<BR>shedding_initial_arm_2<BR>shedding_initial_arm_3<BR>shedding_repeat_arm_1<BR>shedding_repeat_arm_2<BR>shedding_repeat_arm_3</td><td>(none)</td></tr>
+<tr align=center><td>redcap_repeat_instance</td><td>character</td><td>TRUE</td><td>1 to 88</td><td>shedding initial and contact initial were changed to repeating events mid-study, so earlier ones have instance=NULL</td></tr>
+<tr align=center><td>sample_id</td><td>character</td><td>FALSE</td><td>numerous identifiers</td><td>(none)</td></tr>
+<tr align=center><td>sample_type</td><td>character</td><td>FALSE</td><td>Anterior Nasal Swab<BR>Extracted Nucleic Acid<BR>IcePac Sample<BR>Midturbinate Swab<BR>Saliva</td><td>(none)</td></tr>
+<tr align=center><td>ct_ngene_screen</td><td>numeric</td><td>FALSE</td><td>10.1 to 40</td><td>40 is nondetect</td></tr>
+<tr align=center><td>ct_orf1ab_screen</td><td>numeric</td><td>FALSE</td><td>10.9 to 40</td><td>40 is nondetect</td></tr>
+<tr align=center><td>ct_sgene_screen</td><td>numeric</td><td>FALSE</td><td>11.6 to 40</td><td>40 is nondetect</td></tr>
+<tr align=center><td>symptom_time</td><td>POSIXct</td><td>TRUE</td><td>2020-05-12 09:24:50 to 2021-07-27 15:32:20</td><td>from Symptom Card Current or Daily Log<BR>NAs may occur for driveby_saliva if the participant did not fill out a survey that day, or home sample entries</td></tr>
+<tr align=center><td>oral_temp</td><td>numeric</td><td>TRUE</td><td>31.56 to 39.5</td><td>from Symptom Card Current or Daily Log</td></tr>
+<tr align=center><td>nose_run</td><td>integer</td><td>FALSE</td><td>0 to 3</td><td>from Symptom Card Current or Daily Log</td></tr>
+<tr align=center><td>nose_stuf</td><td>integer</td><td>FALSE</td><td>0 to 3</td><td>from Symptom Card Current</td></tr>
+<tr align=center><td>sneeze</td><td>integer</td><td>FALSE</td><td>0 to 2</td><td>from Symptom Card Current</td></tr>
+<tr align=center><td>throat_sr</td><td>integer</td><td>FALSE</td><td>0 to 3</td><td>from Symptom Card Current or Daily Log</td></tr>
+<tr align=center><td>earache</td><td>integer</td><td>FALSE</td><td>0 to 2</td><td>from Symptom Card Current</td></tr>
+<tr align=center><td>malaise</td><td>integer</td><td>FALSE</td><td>0 to 3</td><td>from Symptom Card Current or Daily Log</td></tr>
+<tr align=center><td>headache</td><td>integer</td><td>FALSE</td><td>0 to 3</td><td>from Symptom Card Current</td></tr>
+<tr align=center><td>mj_ache</td><td>integer</td><td>FALSE</td><td>0 to 3</td><td>from Symptom Card Current</td></tr>
+<tr align=center><td>sw_fever_chill</td><td>integer</td><td>FALSE</td><td>0 to 3</td><td>from Symptom Card Current or Daily Log</td></tr>
+<tr align=center><td>nausea</td><td>integer</td><td>FALSE</td><td>0 to 2</td><td>from Symptom Card Current</td></tr>
+<tr align=center><td>loa</td><td>integer</td><td>FALSE</td><td>0 to 3</td><td>from Symptom Card Current or Daily Log</td></tr>
+<tr align=center><td>vomit</td><td>integer</td><td>FALSE</td><td>0 to 1</td><td>from Symptom Card Current</td></tr>
+<tr align=center><td>diarrhea</td><td>integer</td><td>FALSE</td><td>0 to 3</td><td>from Symptom Card Current or Daily Log</td></tr>
+<tr align=center><td>chest_tight</td><td>integer</td><td>FALSE</td><td>0 to 2</td><td>from Symptom Card Current</td></tr>
+<tr align=center><td>sob</td><td>integer</td><td>FALSE</td><td>0 to 3</td><td>from Symptom Card Current or Daily Log</td></tr>
+<tr align=center><td>cough</td><td>integer</td><td>FALSE</td><td>0 to 3</td><td>from Symptom Card Current or Daily Log</td></tr>
+<tr align=center><td>taste_smell_loss</td><td>factor</td><td>TRUE</td><td>0<BR>1<BR>NA</td><td>from Symptom Card Current or Daily Log</td></tr>
+<tr align=center><td>ox_sat</td><td>numeric</td><td>TRUE</td><td>94 to 99</td><td>(none)</td></tr>
+<tr align=center><td>fever_samp</td><td>logical</td><td>TRUE</td><td>FALSE<BR>TRUE<BR>NA</td><td>did participant report temperature &ge; 37.8</td></tr>
+<tr align=center><td>days_past_onset</td><td>numeric</td><td>TRUE</td><td>-151 to 168</td><td>sample_date minus real_onset</td></tr>
+<tr align=center><td>ct_avg_screen</td><td>numeric</td><td>FALSE</td><td>11.8666666666667 to 40</td><td>average of ct_ngene_screen, ct_orf1ab_screen, ct_sgene_screen</td></tr>
+<tr align=center><td>ur</td><td>integer</td><td>FALSE</td><td>0 to 10</td><td></td></tr>
+<tr align=center><td>lr</td><td>integer</td><td>FALSE</td><td>0 to 5</td><td></td></tr>
+<tr align=center><td>gi</td><td>integer</td><td>FALSE</td><td>0 to 7</td><td></td></tr>
+<tr align=center><td>sys</td><td>integer</td><td>FALSE</td><td>0 to 11</td><td></td></tr>
+</table><BR>
+</div>
+<div class='qpcr_allsamples block'>
+Data frame: qpcr_allsamples<BR>
+<table border=1>
+<tr align=center><td><B>Variable name</B></td><td><B>Variable class</B></td><td><B>Are there NAs in this field?</B></td><td><B>Possible values or range of values</B></td><td><B>Notes</B></td></tr>
+<tr align=center><td>exp_name</td><td>character</td><td>FALSE</td><td>20200623_2 ST03049 nCoV RT-qPCR.eds<BR>20200626_2 ST03051 nCoV RT-qPCR.eds<BR>20200629_1 ST03053 nCoV Screening PCR.eds<BR>20200810_1 ST03063 nCoV Screening PCR.eds<BR>20200815_1 ST03071 nCoV RT-qPCR.eds<BR>20200903_2 ST03075 nCoV RT-qPCR.eds<BR>20200929_2 ST03077 nCoV RT-qPCR.eds<BR>20201010_1 ST03081 nCoV RT-qPCR.eds<BR>20201013_3 ST03083 nCoV RT-qPCR.eds<BR>20201028_2 ST03085 nCoV RT-qPCR.eds<BR>20201103_2 ST03087 nCoV RT-qPCR.eds<BR>20201106_1 ST03089 nCoV RT-qPCR.eds<BR>20201110_2 ST03091 nCoV RT-qPCR.eds<BR>20201119_2 ST03093 nCoV RT-qPCR.eds<BR>20201130_1 ST03095 nCoV RT-qPCR.eds<BR>20201203_2 ST03097 nCoV RT-qPCR.eds<BR>20201208_3 ST03099 nCoV RT-qPCR.eds<BR>20201210_1 ST03101 nCoV RT-qPCR.eds<BR>20201218_3 ST03103 nCoV RT-qPCR.eds<BR>20210106_3 ST03107 nCoV RT-qPCR.eds<BR>20210107_2 ST03109 nCoV RT-qPCR.eds<BR>20210121_2 ST03111 nCoV RT-qPCR.eds<BR>20210128_2 ST03113 nCoV RT-qPCR.eds<BR>20210209_3 ST03115 nCoV RT-qPCR.eds<BR>20210210_2 ST03117 nCoV RT-qPCR.eds<BR>20210216_3 ST03119 nCoV RT-qPCR.eds<BR>20210219_3 ST03121 nCoV RT-qPCR.eds<BR>20210224_3 ST03123 nCoV RT-qPCR.eds<BR>20210303_2 ST03125 nCoV RT-qPCR.eds<BR>20210326_2 ST03129 nCoV RT-qPCR.eds<BR>20210406_2 ST03131 nCoV RT-qPCR.eds<BR>20210408_2 ST03133 nCoV RT-qPCR.eds<BR>20210413_2 ST03135 nCoV RT-qPCR.eds<BR>20210416_2 ST03137 nCoV RT-qPCR.eds<BR>20210422_2 ST03141 nCoV RT-qPCR.eds<BR>20210428_2 ST03143 nCoV RT-qPCR.eds<BR>20210505_2 ST03145 nCoV RT-qPCR.eds<BR>20210511_3 ST03147 nCoV RT-qPCR.eds<BR>20210513_2 ST03149 nCoV RT-qPCR.eds<BR>20210520_2 ST04001 nCoV RT-qPCR.eds<BR>20210526_1 ST04003 nCoV RT-qPCR.eds</td><td>(none)</td></tr>
+<tr align=center><td>sample_id</td><td>character</td><td>FALSE</td><td>numerous identifiers</td><td>(none)</td></tr>
+<tr align=center><td>ct_ngene_qpcr</td><td>numeric</td><td>FALSE</td><td>-1 to 39.99522</td><td>-1 means nondetect</td></tr>
+<tr align=center><td>ct_sgene_qpcr</td><td>numeric</td><td>FALSE</td><td>-1 to 39.576847</td><td>-1 means nondetect</td></tr>
+<tr align=center><td>ct_orfgene_qpcr</td><td>numeric</td><td>FALSE</td><td>-1 to 39.89108</td><td>-1 means nondetect</td></tr>
+<tr align=center><td>rxn_quant</td><td>numeric</td><td>FALSE</td><td>0 to 261827231.077508</td><td>(none)</td></tr>
+<tr align=center><td>study_id</td><td>character</td><td>FALSE</td><td>8 to 491</td><td>(none)</td></tr>
+<tr align=center><td>sample_type</td><td>character</td><td>FALSE</td><td>G-II Coarse Aerosol<BR>G-II Coarse Aerosol mask<BR>G-II Cone Swab<BR>G-II Cone Swab mask<BR>G-II Fine Aerosol<BR>G-II Fine Aerosol mask<BR>IcePac<BR>Midturbinate Swab<BR>Phone Swab<BR>Saliva</td><td>(none)</td></tr>
+<tr align=center><td>sample_date</td><td>Date</td><td>FALSE</td><td>2020-05-14 to 2021-05-01</td><td>(none)</td></tr>
+<tr align=center><td>sample_quant</td><td>numeric</td><td>FALSE</td><td>0 to 6545680776.9377</td><td>(none)</td></tr>
+<tr align=center><td>exp_date</td><td>Date</td><td>FALSE</td><td>2020-06-23 to 2021-05-26</td><td>this refers to the date of the quantitation experiment</td></tr>
+<tr align=center><td>gii_sessnum</td><td>factor</td><td>FALSE</td><td>1<BR>2<BR>not a G-II sample</td><td>(none)</td></tr>
+<tr align=center><td>mask_yn</td><td>factor</td><td>FALSE</td><td>0<BR>1<BR>not a G-II sample</td><td>0 = no<BR>1 = yes</td></tr>
+<tr align=center><td>mask_type</td><td>factor</td><td>FALSE</td><td>1<BR>2<BR>3<BR>5<BR>8<BR>no mask<BR>not a G-II sample</td><td>1 = homemade mask<BR>2 = surgical mask<BR>3 = other comercial mask<BR>4 = B2 mask<BR>5 = mask provided by UMD<BR>8 = other</td></tr>
+<tr align=center><td>cough_count</td><td>numeric</td><td>FALSE</td><td>-999 to 24</td><td>-999 = not a G-II sample<BR>-1 = G-II operator left cough_count blank for some reason</td></tr>
+<tr align=center><td>reserv_time</td><td>numeric</td><td>FALSE</td><td>-999 to 31</td><td>-999 = not a G-II sample</td></tr>
+<tr align=center><td>cens</td><td>numeric</td><td>FALSE</td><td>0 to 1</td><td>sample_quant < 250</td></tr>
+<tr align=center><td>nd_lod_loq</td><td>factor</td><td>FALSE</td><td>0<BR>1<BR>2</td><td>0 = sample_quant is 0<BR>1 = 0 < sample_quant < 250<BR>2 = sample_quant >=250</td></tr>
+<tr align=center><td>gii</td><td>factor</td><td>FALSE</td><td>0<BR>1</td><td>0 = not a G-II session<BR>1 = yes a G-II session</td></tr>
+<tr align=center><td>gii_reps</td><td>numeric</td><td>FALSE</td><td>0 to 16</td><td>number of G-II qPCR experiment replicates for this subject on this day</td></tr>
+<tr align=center><td>any_rep_lod1</td><td>logical</td><td>FALSE</td><td>FALSE<BR>TRUE</td><td></td></tr>
+<tr align=center><td>all_rep_lod2</td><td>logical</td><td>FALSE</td><td>FALSE<BR>TRUE</td><td></td></tr>
+<tr align=center><td>all_rep_loq</td><td>logical</td><td>FALSE</td><td>FALSE<BR>TRUE</td><td></td></tr>
+<tr align=center><td>av_quant</td><td>numeric</td><td>FALSE</td><td>0 to 5108648662.0766</td><td></td></tr>
+<tr align=center><td>S.gene.dropout</td><td>logical</td><td>FALSE</td><td>FALSE<BR>TRUE</td><td></td></tr>
+<tr align=center><td>loq</td><td>logical</td><td>FALSE</td><td>FALSE<BR>TRUE</td><td></td></tr>
+<tr align=center><td>mdfy_sample_quant</td><td>numeric</td><td>FALSE</td><td>6.49484695096618 to 6545680776.9377</td><td></td></tr>
+<tr align=center><td>culture_status</td><td>factor</td><td>FALSE</td><td>negative<BR>not cultured<BR>positive</td><td>(none)</td></tr>
+</table><BR>
+</div>
+<div class='sero1 block'>
+Data frame: sero1<BR>
+<table border=1>
+<tr align=center><td><B>Variable name</B></td><td><B>Variable class</B></td><td><B>Are there NAs in this field?</B></td><td><B>Possible values or range of values</B></td><td><B>Notes</B></td></tr>
+<tr align=center><td>study_id</td><td>character</td><td>FALSE</td><td>8 to 491</td><td>(none)</td></tr>
+<tr align=center><td>date_visit</td><td>Date</td><td>FALSE</td><td>2020-05-14 to 2021-05-24</td><td>(none)</td></tr>
+<tr align=center><td>ab_screen</td><td>logical</td><td>FALSE</td><td>FALSE<BR>TRUE</td><td>outcome of antigen test</td></tr>
+<tr align=center><td>igg_titer</td><td>factor</td><td>FALSE</td><td>1:1<BR>1:128<BR>1:16<BR>1:256<BR>1:4<BR>1:512+<BR>1:64<BR>Negative</td><td>ab_screen = FALSE means igg_titer was Negative</td></tr>
+<tr align=center><td>igm_titer</td><td>factor</td><td>FALSE</td><td>1:1<BR>1:16<BR>1:4<BR>1:64<BR>Negative</td><td>ab_screen = FALSE means igm_titer was Negative</td></tr>
+<tr align=center><td>serum1</td><td>Date</td><td>FALSE</td><td>2020-05-14 to 2021-04-30</td><td>date of the first blood draw, usually on the initial shedding or contact visit</td></tr>
+<tr align=center><td>serum2</td><td>Date</td><td>FALSE</td><td>2020-05-22 to 2021-05-24</td><td>date of the second blood draw, usually on the IR follow-up visit</td></tr>
+<tr align=center><td>sero_daydiff</td><td>numeric</td><td>FALSE</td><td>0 to 139</td><td>number of days between first and second blood draw</td></tr>
+<tr align=center><td>seroconvert</td><td>factor</td><td>FALSE</td><td>0<BR>1<BR>2<BR>3<BR>9</td><td>0 = initial negative, convalescent negative<BR>1 = initial negative, convalescent positive<BR>2 = initial positive, convalescent negative<BR>3 = initial positive, convalescent positive<BR>9 = only did one blood draw, or did two blood draws but assays not done/complete<BR>NA = probably no shot</td></tr>
+</table><BR>
+</div>
+</BODY>
+</HTML>

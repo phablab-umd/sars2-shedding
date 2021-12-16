@@ -1,0 +1,48 @@
+---
+title: "Exploration of Poisson Model for Culture Data"
+author: "Don Milton"
+date: "7/14/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(ggplot2)
+```
+
+## R Markdown
+
+Does a Poisson probability model match the pattern of results that we see for 
+the probability of a positive culture based on RNA copy number? 
+Let P be the probability of a postive culture. 
+Let N be the number of RNA copies
+Let lambda be the probablity of infection per RNA copy. 
+Then, P = 1 - exp(-lambda * N)
+When P = 0.5 = 1 - exp(-lambda * N), exp(-lambda*N) = 0.5,
+-lambda*N = ln(0.5),
+lambda = -ln(0.5)/N
+
+```{r lambda}
+N_MTS <- 10^5.9
+N_sal <- 10^6.7
+lambda_MTS <- -log(0.5)/N_MTS
+lambda_sal <- -log(0.5)/N_sal
+
+lambda_MTS
+lambda_sal
+
+```
+
+We will plot P on N, with N as log10 RNA copies
+
+
+
+```{r Prob Plot, echo=FALSE}
+N <- seq.int(2,9,0.1)
+N <- 10^N
+P_MTS <- 1 - exp(-lambda_MTS*N)
+plot(P_MTS~log10(N))
+```
+
+

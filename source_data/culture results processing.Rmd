@@ -1,0 +1,127 @@
+---
+title: "culture results processing"
+author: "Filbert Hong"
+date: "April 7, 2021"
+output: html_document
+---
+contains snippets for doing light cleaning on Stuart's data
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(readxl)
+library(aws.s3)
+```
+culture files merged manually first
+```{r clean up some cultureraw}
+cultureraw <- read.csv(file="culture files/culture_results_merged_raw.csv",stringsAsFactors = F)
+culturelatest <- cultureraw %>% filter(!is.na(subject_id))
+culturelatest$status[culturelatest$status=="green"] <- "positive"
+culturelatest$status[culturelatest$status=="(none)"] <- "negative"
+culturelatest$sample_type[grepl("MT",culturelatest$sample_type)] <- "Midturbinate Swab"
+culturelatest$sample_type <- culturelatest$sample_type %>% gsub(" Derivative","",.)
+culturelatest$sample_type <- culturelatest$sample_type %>% gsub("5uM","5-Micron",.)
+culturelatest$sample_type[grepl("MT",culturelatest$sample_type)] <- "Midturbinate Swab"
+for (i in 1:nrow(culturelatest)) {
+  if (!grepl("-",culturelatest$date_collect[i])) {
+    j <- culturelatest$date_collect[i]
+    culturelatest$date_collect[i] <- paste0(substr(j,1,4),"-",substr(j,5,6),"-",substr(j,7,10))
+  }
+}
+culturelatest <- culturelatest %>% arrange(as.numeric(subject_id),date_collect,sample_type,sample_id)
+```
+manually adding 20201222 and 2021402 positives
+```{r 20201222 and 2021402}
+positives_20201222_2021402_raw <- read_xlsx("culture files/20201222 and 2021402 positives.xlsx")
+temp1 <- positives_20201222_2021402_raw[,c(1:4)]
+temp2 <- positives_20201222_2021402_raw[,c(8:11)]
+colnames(temp1) <- c("sample_id","subject_id","date_collect","sample_type")
+colnames(temp2) <- c("sample_id","subject_id","date_collect","sample_type")
+temp1 <- temp1[c(2:nrow(temp1)),]
+temp2 <- temp2[c(2:nrow(temp2)),]
+temp1$box <- "20201222"
+temp2$box <- "20210402"
+temp1$status <- "positive"
+temp2$status <- "positive"
+temp1 <- temp1 %>% filter(!is.na(sample_id))
+temp2 <- temp2 %>% filter(!is.na(sample_id))
+
+# add negatives from the boxes
+catchaccess <- Sys.getenv("OBJ_ACCESS_CATCH") # put the CATCH group access key name here
+catchsecret <- Sys.getenv("OBJ_SECRET_CATCH") # put the CATCH group secret key name here
+Sys.setenv("AWS_ACCESS_KEY_ID" = catchaccess,
+           "AWS_SECRET_ACCESS_KEY" = catchsecret,
+           "AWS_S3_ENDPOINT"="obj.umiacs.umd.edu",
+           "AWS_DEFAULT_REGION"="stopcovid-shipping")
+ship20201222 <- s3read_using(FUN=read_xlsx,object="shipping-lists/frieman-culture/20201222_Shipping_List_to_UMB.xlsx",bucket="")
+ship20210402 <- s3read_using(FUN=read_xlsx,object="shipping-lists/frieman-culture/20210402_Shipping_List_to_UMB.xlsx",bucket="")
+colnames(ship20201222) <- c("box","location_serial","location_grid","sample_id","subject_id","date_collect","sample_type","vol","thaw")
+colnames(ship20210402) <- c("box","location_serial","location_grid","sample_id","subject_id","date_collect","sample_type","vol","thaw")
+ship20201222 <- ship20201222 %>% filter(!is.na(sample_id))
+ship20210402 <- ship20210402 %>% filter(!is.na(sample_id))
+
+temp1$sample_id %>% subset(!(. %in% ship20201222$sample_id))
+temp2$sample_id %>% subset(!(. %in% ship20210402$sample_id))
+
+neg20201222 <- ship20201222 %>% filter(!(sample_id %in% temp1$sample_id))
+neg20210402 <- ship20210402 %>% filter(!(sample_id %in% temp2$sample_id))
+
+neg20201222$status <- "negative"
+neg20210402$status <- "negative"
+
+temp2$date_collect <- temp2$date_collect %>% sapply(function(x) {paste0(substr(x,1,4),"-",substr(x,5,6),"-",substr(x,7,10))})
+neg20210402$date_collect <- neg20210402$date_collect %>% sapply(function(x) {paste0(substr(x,1,4),"-",substr(x,5,6),"-",substr(x,7,10))})
+
+temp1$subject_id <- temp1$subject_id %>% as.numeric()
+temp2$subject_id <- temp2$subject_id %>% as.numeric()
+neg20201222$location_serial <- neg20201222$location_serial %>% as.numeric()
+neg20210402$location_serial <- neg20210402$location_serial %>% as.numeric()
+culturelatest <- culturelatest %>% bind_rows(temp1,temp2,neg20201222,neg20210402)
+
+```
+# add 0503 box
+```{r 202010503}
+box20210503 <- read_xlsx("culture files/20210503 virus culture.xlsx")
+box20210503 <- box20210503[,c(16:ncol(box20210503))]
+colnames(box20210503) <- c("location_serial","location_grid","sample_id","subject_id","date_collect","sample_type","vol","status")
+box20210503$box <- "20210503"
+box20210503 <- box20210503 %>% filter(!is.na(subject_id))
+box20210503$location_serial <- box20210503$location_serial %>% as.numeric()
+box20210503$date_collect <- box20210503$date_collect %>% as.character()
+culturelatest <- culturelatest %>% bind_rows(box20210503)
+```
+# add 0621 box
+```{r 20210621}
+box20210621 <- read.csv("culture files/20210621 virus culture results.csv",stringsAsFactors=F)
+box20210621$box <- box20210621$box %>% as.character()
+box20210621$status[box20210621$status=="green"] <- "positive"
+box20210621$status[box20210621$status=="(none)"] <- "negative"
+culturelatest <- culturelatest %>% bind_rows(box20210621)
+```
+check to make sure subject IDs and dates match up
+```{r clean and verify}
+# fix sample types
+culturelatest$sample_type <- culturelatest$sample_type %>% gsub(" Derivative","",.)
+culturelatest$sample_type[culturelatest$sample_type=="G2 Fine Aerosol Wash"] <- "G-II Fine Aerosol"
+culturelatest$sample_type[culturelatest$sample_type=="G2 5-Micron Impactor"] <- "G-II Coarse Aerosol"
+culturelatest$sample_type[culturelatest$sample_type=="IcePac Sample"] <- "IcePac"
+
+# typos on 4/2 sheet
+friemanidcorrections1 <- c("NA0040116993","NA0040115344","NA0040115324","NA0040117027","NA0040116998")
+friemanidcorrections2 <- c("446","471","471","471","471")
+for (i in 1:length(friemanidcorrections1)) {
+  culturelatest$subject_id[culturelatest$sample_id==friemanidcorrections1[i]] <- friemanidcorrections2[i]
+}
+
+allsamples <- read.csv("StopCOVIDsamples.csv",stringsAsFactors=F)
+allsamples1 <- allsamples %>% select(sample_id,study_id,date_collected_sg)
+culturelatest1 <- culturelatest %>% left_join(allsamples1,by="sample_id")
+problemset <- culturelatest1 %>% filter(subject_id!=study_id | date_collect!=date_collected_sg)
+if (nrow(problemset)>0) {
+  print("problem with sample id")
+  stop()
+}
+```
+write
+```{r write culture}
+write.csv(culturelatest,file = "culture_results_merged_latest.csv",row.names=F)
+```

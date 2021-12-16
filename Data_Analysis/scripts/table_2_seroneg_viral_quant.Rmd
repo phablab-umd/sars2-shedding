@@ -1,0 +1,289 @@
+---
+title: "table_2_seroneg_viral_quant"
+author: "Sanmi Adenaiye"
+date: "4/15/2021"
+output:
+  html_document:
+    df_print: paged
+  word_document: default
+always_allow_html: yes
+---
+a summary table containing counts of positive cases and positive samples
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(lmec)
+library(lme4)
+source("z_create_matrix.R")
+source("fixRNAscientific.R")
+set.seed(42)
+```
+data: nonpaired rpr data filtered for seronegative participants
+```{r}
+nonpaired_pcr_dat <- read.csv("../working_files/nonpaired_pcr_sx_rpr.csv",stringsAsFactors=F)
+dF <- nonpaired_pcr_dat %>% filter(pos_enrollment=="Negative")
+
+# geometric mean function
+gm_mean <- function(x, na.rm=TRUE) {
+  y <- exp(sum(log(x[x > 0]), na.rm=na.rm) / length(x))
+  return(y)
+}
+```
+# Counts of tested cases, samples (at LOD, LOQ), culture status
+```{r}
+tested_case_samp_df <- dF %>% distinct(study_id, sample_date, sample_type) %>% group_by(sample_type) %>%
+  summarize(Cases = length(unique(study_id)),`qPCR Samples` = n())
+tested_case_samp_df
+
+# Count samples >LOD, LOQ
+pos_samp_df <- dF %>% distinct(study_id, sample_date, sample_type,.keep_all = T) %>% group_by(sample_type) %>%
+  summarize(n_lod1 = sum(any_rep_lod1),
+            n_lod2 = sum(all_rep_lod2),
+            n_loq = sum(loq))
+pos_samp_df
+
+neg_samp_df <- dF %>%
+  filter(culture_status != "not cultured") %>%
+  distinct(sample_id, .keep_all = T) %>%
+  group_by(sample_type, culture_status) %>%
+  #Number of samples that tested below lod1
+  summarize(
+    lt_lod1 = sum(!any_rep_lod1),
+    lt_loq = sum(!loq & any_rep_lod1),
+    gt_loq = sum(loq)
+  )
+neg_samp_df
+
+# for manuscript text: “The other culture-positive aerosol sample was one of 98 aerosol samples below the 75-copy limit of detection for RNA”
+
+aerosolsampcount <- neg_samp_df %>% filter(grepl("Fine",sample_type)) %>% pull(lt_lod1) %>% sum()
+aerosolsampcount
+manutext <- paste0("The other culture-positive aerosol sample was one of ",aerosolsampcount," aerosol samples below the 75-copy limit of detection for RNA")
+write(manutext,file="../table_output/repo_table_2_fine_below_lod_not_cultured.txt")
+
+n_sid_lod1_df <- dF %>% filter(any_rep_lod1)
+n_sid_lod1_df <- n_sid_lod1_df%>% mutate(ur=formatC(max(sample_quant),format = "e", digits = 1)) %>% distinct(sample_id,.keep_all = T) %>% group_by(sample_type) %>%
+  summarize(n_sid_lod1=length(unique(study_id)),
+            upperRange=formatC(max(ur),format = "e", digits = 1)) #this is upper bound of any_rep_lod samples
+n_sid_lod1_df
+
+n_sid_lod2_df <- dF %>% filter(all_rep_lod2)
+n_sid_lod2_df <- n_sid_lod2_df %>% distinct(sample_id,.keep_all = T) %>% group_by(sample_type) %>%
+  summarize(n_sid_lod2=length(unique(study_id)))
+n_sid_lod2_df
+
+n_sid_loq_df <- dF %>%filter(loq)
+n_sid_loq_df <- n_sid_loq_df %>% distinct(sample_id,.keep_all = T) %>% group_by(sample_type) %>%
+  summarize(n_sid_loq=length(unique(study_id)))
+n_sid_loq_df
+
+culture_df <- dF %>% filter(culture_status!="not cultured") %>%
+                distinct(sample_id, sample_type,.keep_all = T) %>% group_by(sample_type) %>%
+                summarize(n_samp_culture = n(),
+                          n_sid_culture = length(unique(study_id)),
+                          n_samp_culture_pos = sum(culture_status=="positive"))
+culture_df <- culture_df %>% mutate(n_samp_culture_pos_per =round((n_samp_culture_pos/n_samp_culture)*100,0))
+culture_df
+
+n_sid_culture_pos <- dF %>% filter(culture_status=="positive") %>% distinct(sample_id,.keep_all = T) %>% group_by(sample_type) %>%
+  summarize(n_sid_culture_pos = length(unique(study_id)))
+n_sid_culture_pos
+```
+
+#  Geometric mean, Geometric SD for positive cases
+```{r}
+gm_gsd_df <- dF %>% filter(nd_lod_loq != 0)
+gm_gsd_df <- gm_gsd_df %>% group_by(sample_id) %>% mutate(hq=(sample_quant==max(sample_quant)),
+                                                          av_per_sample_id=mean(sample_quant,na.rm = T))
+# hq identifies the row(s) with highest sample_quant in every group of replicate
+# av_per_sample_id estimates the average sample_quant for every group of 2-replicates excluding non-detects
+
+gm_gsd_df <- gm_gsd_df %>% distinct(sample_id,.keep_all = T) %>% group_by(sample_type)
+gm_gsd_df <- gm_gsd_df%>% summarize(
+  arith_ave=mean(av_per_sample_id),
+  Max_ave_per_sample=paste(formatC(max(av_per_sample_id), format = "e", digits = 1)), #this range will give range for any LOD
+  n_samp_included_in_gm_est=n(),
+  GM_positive_samples_only = formatC(gm_mean(av_per_sample_id),format = "e", digits = 1))
+
+gm_gsd_df
+```
+
+```{r}
+partial_summary <- tested_case_samp_df %>%
+  left_join(pos_samp_df, by="sample_type") %>%
+  left_join(n_sid_lod1_df, by="sample_type") %>%
+  left_join(n_sid_lod2_df, by="sample_type") %>%
+  left_join(n_sid_loq_df, by="sample_type") %>%
+  left_join(culture_df, by="sample_type") %>%
+  left_join(n_sid_culture_pos, by="sample_type") %>%
+  left_join(gm_gsd_df, by="sample_type")
+partial_summary
+```
+
+# Compute sample percentages and case percentages
+```{r}  
+full_summary <- partial_summary %>% mutate(
+  n_lod1_perc=round((n_lod1/`qPCR Samples`)*100,0),
+  n_lod2_perc=round((n_lod2/`qPCR Samples`)*100,0),
+  n_loq_perc=round((n_loq/`qPCR Samples`)*100,0),
+  n_sid_lod1_perc=round((n_sid_lod1/Cases)*100,0),
+  n_sid_lod2_perc=round((n_sid_lod2/Cases)*100,0),
+  n_sid_loq_perc=round((n_sid_loq/Cases)*100,0),
+  n_sid_culture_pos_per=round((n_sid_culture_pos/n_sid_culture)*100,0))
+full_summary
+```
+
+```{r}
+summary_wo_gm <- full_summary %>% mutate(
+  `Participants LOD`=paste0(n_sid_lod1," (",n_sid_lod1_perc,")"),
+  `Participants LOQ`=paste0(n_sid_loq," (",n_sid_loq_perc,")"),
+  `Samples LOD`= paste0(n_lod1," (",n_lod1_perc,")"),
+  `Samples LOQ`=paste0(n_loq," (",n_loq_perc,")"),
+  `Culture n/N* (% Positive)`=paste0(n_samp_culture_pos,"/",n_samp_culture," (",n_samp_culture_pos_per,")"))
+summary_wo_gm <- summary_wo_gm %>% select(sample_type,Cases,`qPCR Samples`,upperRange,Max_ave_per_sample,GM_positive_samples_only,`Participants LOD`,`Participants LOQ`,`Samples LOD`,`Samples LOQ`,`Culture n/N* (% Positive)`)
+summary_wo_gm
+```
+
+## LMEC
+Cut individual sample type datasets
+```{r}
+pcr_dat_clean <- dF %>% mutate(ln_final_copies=log(mdfy_sample_quant))
+pcrdatclean_sampletypes <- pcr_dat_clean$sample_type %>% unique()
+
+sarslist <- pcrdatclean_sampletypes %>% lapply(function(x) {pcr_dat_clean %>% filter(sample_type==x)})
+names(sarslist) <- pcrdatclean_sampletypes
+
+sarslist_sid_samp <- sarslist %>% lapply(function(x) {x %>% summarise(sid = n_distinct(study_id),samples = n_distinct(study_id,sample_date))})
+sarslist_sid_samp %>% unlist()
+
+sarslist_zmatrix <- sarslist %>% lapply(z_create_matrix)
+```
+# Construct models and extract GM and GSD
+```{r}
+ef_est_reml_df_list <- list()
+
+pcrdatclean_sampletypes1 <- pcrdatclean_sampletypes %>% subset(!(grepl("IcePac|Cone",.)))
+
+for (q in pcrdatclean_sampletypes1) {
+  
+  # MODEL FOR: 
+  print(q)
+  
+  sarsdataset <- sarslist[[q]]
+  Z_current <- z_create_matrix(sarsdataset)
+  vars <- c("intercept", "study_id") # naming for table creation later on.
+  X <- matrix(rep(1, length(sarsdataset$ln_final_copies)), ncol=1) #for intercept only
+  cluster <- as.numeric(as.factor(sarsdataset$study_id))
+  
+  fit_reml <- lmec(yL = sarsdataset$ln_final_copies,
+                  cens = sarsdataset$cens,
+                  X = X, 
+                  Z = Z_current,
+                  cluster=cluster,
+                  method='ML',
+                  maxstep=200)
+  summary(fit_reml)
+  print(fit_reml)
+  
+  #### Taking model parameter estimates and using to generate GM (GSD) and confidence interval ####
+  betas <- length(fit_reml$beta) 
+  n <- length(sarsdataset$study_id)
+  ef_est <- c()
+  low_ci <- c()
+  up_ci <- c()
+  ef_est_reml <- c()
+  
+  for (i in 1:betas) {
+                  beta <- fit_reml$beta[i]
+                  sigma <- sqrt(fit_reml$varFix[i])
+                  low_ci_fold_inc <- signif(exp(beta - 1.96*(sigma)), 2)
+                  up_ci_fold_inc <- signif(exp(beta + 1.96*(sigma)), 2)
+                  fold_inc <- signif(exp(beta), 2)
+                  var <- vars[i]
+                  fold_inc_var <- cbind(var, fold_inc, low_ci_fold_inc, up_ci_fold_inc)
+                  ef_est_reml <- rbind(ef_est_reml, fold_inc_var)
+  }
+  
+  ef_est_reml_df <- as.data.frame(ef_est_reml) %>%
+                  mutate(fold_inc = formatC(as.numeric(as.character(fold_inc)), format = "e", digits = 1),
+                         low_ci_fold_inc = formatC(as.numeric(as.character(low_ci_fold_inc)), format = "e", digits = 1),
+                         up_ci_fold_inc = formatC(as.numeric(as.character(up_ci_fold_inc)), format = "e", digits = 1)) %>% 
+                  unite("95% CI", low_ci_fold_inc, up_ci_fold_inc, sep = ", ") %>%
+                  mutate(`95% CI` = paste0("(", `95% CI`, ")")) %>%
+                  unite("effect_ci",  fold_inc, `95% CI`, sep = " ") %>%
+                  mutate(gsd = signif(exp(fit_reml$sigma), digits = 2))
+  
+  print(ef_est_reml_df)
+  ef_est_reml_df_list[[q]] <- ef_est_reml_df
+
+}
+```
+
+## Final GM table
+```{r}
+gm_table1 <- bind_rows(ef_est_reml_df_list)
+gm_table1$`Sample Type` <- names(ef_est_reml_df_list)
+gm_table1 <- gm_table1 %>% arrange(`Sample Type`)
+gm_table1 <- gm_table1 %>% rename(`GM (95% CI)` = effect_ci,`GSD` = gsd) %>% select(`Sample Type`,`GM (95% CI)`,`GSD`)
+```
+Bind summary_wo_gm with gm_table 
+```{r}
+table_df <- merge(summary_wo_gm,gm_table1,by.x = "sample_type",by.y = "Sample Type")
+table_df <- table_df %>% filter(sample_type %in% c("Midturbinate Swab","Saliva","Phone Swab","G-II Coarse Aerosol","G-II Coarse Aerosol mask","G-II Fine Aerosol","G-II Fine Aerosol mask"))
+
+# rename and reorder cols
+Table2 <- table_df %>% rename(`Sample Type`=sample_type,`Samples`="qPCR Samples",`Maximum RNA copies`="Max_ave_per_sample")
+Table2 <- Table2 %>% select(`Sample Type`,Cases,`Participants LOD`,`Participants LOQ`,Samples,`Samples LOD`,`Samples LOQ`,`Culture n/N* (% Positive)`,`GM (95% CI)`,GSD,`Maximum RNA copies`)
+
+# rename and reorder rows
+Table2$`Sample Type`[Table2$`Sample Type`=="Phone Swab"] <- "Fomite"
+tables2order <- c("Midturbinate Swab","Saliva","Fomite","G-II Coarse Aerosol","G-II Coarse Aerosol mask","G-II Fine Aerosol","G-II Fine Aerosol mask")
+
+Table2_1 <- tables2order %>% matrix(ncol=1) %>% as.data.frame(stringsAsFactors=F)
+colnames(Table2_1) <- "Sample Type"
+Table2_1 <- Table2_1 %>% left_join(Table2,by="Sample Type")
+
+write.csv(Table2_1,file="../working_files/repo_table_2_semiformatted.csv",row.names=F)
+```
+
+```{r fix the scientific notation}
+Table2_2 <- Table2_1
+Table2_2$`Maximum RNA copies` <- Table2_2$`Maximum RNA copies` %>% sapply(function(x) {if (x!="-") {fixRNAscientific(x)} else {x}})
+Table2_2$`GM (95% CI)` <- Table2_2$`GM (95% CI)` %>% sapply(function(x) {if (x!="-") {GMCIparse_fixsci(x)} else {x}})
+Table2_2
+```
+
+```{r write final table}
+write.csv(Table2_2, file="../table_output/repo_table_2_seroneg_viral_quant.csv",row.names = F)
+```
+
+## comparing coarse and fine aerosols (w/o mask) and confidence limits
+```{r}
+dF_fine_coarse_nomask <- pcr_dat_clean %>% filter(sample_type %in% c("G-II Coarse Aerosol", "G-II Fine Aerosol")) %>% mutate(sample_type = factor(sample_type))
+Z_current <- z_create_matrix(dF_fine_coarse_nomask)
+cluster <- as.numeric(as.factor(dF_fine_coarse_nomask$study_id))
+yL = dF_fine_coarse_nomask$ln_final_copies
+  
+lm <- lmer (yL ~ (1|study_id) + (1|study_id:sample_date) + sample_type, data=dF_fine_coarse_nomask)
+x_matrix <- getME(lm, "X")
+
+fit_reml <- lmec(yL = yL,
+                  cens = dF_fine_coarse_nomask$cens,
+                  X = x_matrix, 
+                  Z = Z_current,
+                  cluster=cluster,
+                  method='ML',
+                  maxstep=200)
+  summary(fit_reml)
+  print(fit_reml)
+beta <- fit_reml$beta[2]
+sigma <- sqrt(abs(fit_reml$varFix[2]))
+low_ci_fold_inc <- signif(exp(beta - 1.96*(sigma)), 2)
+up_ci_fold_inc <- signif(exp(beta + 1.96*(sigma)), 2)
+fold_inc <- signif(exp(beta), 2)
+fold_inc_var <- cbind(var, fold_inc, low_ci_fold_inc, up_ci_fold_inc) %>% as.data.frame()
+fold_inc_var
+
+fine_coarse_compare_txt <- paste0("The quantity of viral RNA in the fine-aerosol fraction was ",fold_inc,"-fold (95% CI ",low_ci_fold_inc," to ",up_ci_fold_inc,"-fold)")
+write(fine_coarse_compare_txt,file="../table_output/repo_table_2_fine_coarse_compare.txt")
+```

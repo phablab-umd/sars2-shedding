@@ -1,0 +1,120 @@
+---
+title: "table_s4_paired_mask_regression"
+author: "Jianyu Lai"
+date: "6/25/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(Matrix)
+library(mvtnorm)
+library(lme4)
+library(lmec)
+library(tidyverse)
+source("z_create_matrix.R")
+set.seed(42)
+```
+
+## data: paired rpr filtered for seronegative
+```{r}
+rpr <- read.csv("../working_files/paired_pcr_sx_rpr.csv")
+paired_rpr <- rpr %>% filter(pos_enrollment=="Negative")
+paired_rpr <- paired_rpr %>% mutate(sgene = factor(S.gene.dropout),
+                                    period = as.numeric(as.Date(sample_date) > "2020-12-31"),
+                                    mask1 = ifelse(mask_type %in% c(1,3,5), 1, 0),
+                                    mask2 = ifelse(mask_type==2, 1, 0))
+length(unique(paired_rpr$sample_id))
+```
+
+## fine_paired/coarse_paired datasets
+```{r}
+paired_mask<- paired_rpr %>%filter(mask_type %in% c(1,2,3,5)) %>% select(study_id, sample_date)
+paired_nomask <- paired_rpr %>% filter(mask_yn==0) %>% select(study_id, sample_date)
+
+paired_rpr_sub <- left_join(intersect(paired_mask, paired_nomask),paired_rpr,by=c("study_id","sample_date")) 
+length(unique(paired_rpr_sub$study_id))
+length(unique(paired_rpr_sub$sample_id))
+
+fine_paired_sub <- paired_rpr_sub %>% filter(sample_type %in% c("G-II Fine Aerosol","G-II Fine Aerosol mask")) 
+length(unique(fine_paired_sub$study_id))
+length(unique(fine_paired_sub$sample_id))
+
+coarse_paired_sub <- paired_rpr_sub %>% filter(sample_type %in% c("G-II Coarse Aerosol", "G-II Coarse Aerosol mask")) 
+length(unique(coarse_paired_sub$study_id))
+length(unique(coarse_paired_sub$sample_id))
+```
+
+## LMEC for fine_paired
+```{r}
+Z_fine_paired_sub <- z_create_matrix(fine_paired_sub)
+cluster_fine_paired_sub <- as.numeric(factor(fine_paired_sub$study_id))
+cens_fine_paired_sub <- fine_paired_sub$cens
+yL_fine_paired_sub <- fine_paired_sub$mdfy_sample_quant %>% log()
+
+lm <- lmer (yL_fine_paired_sub ~ (1|study_id) + (1|study_id:sample_id) + mask_yn + mask2 + cough_count, data=fine_paired_sub)
+x_matrix <- getME(lm, "X")
+
+fit_ML <- lmec(yL=yL_fine_paired_sub, cens=cens_fine_paired_sub, X=x_matrix, Z=Z_fine_paired_sub, cluster=cluster_fine_paired_sub, maxstep = 200, varstruct = "unstructured", method = "ML")
+vars <- c("intercept", "mask_all", "mask2", "cough_count")
+est_ci_fine_mask <- c()
+for (i in c(1:4)) {
+  se <- sqrt(diag(fit_ML$varFix))[i]
+  up <- fit_ML$beta[i]+1.96*se
+  low <- fit_ML$beta[i]-1.96*se
+  print(cat(i, fit_ML$beta[i],'(',low, ',', up, ')'))  
+  
+  est <- fit_ML$beta[i]
+  se <- sqrt(diag(fit_ML$varFix))[i]
+  up <- est+1.96*se
+  low <- est-1.96*se
+  
+  est_ci <- c(vars[i], est, low, up)
+  est_ci_fine_mask <- rbind(est_ci_fine_mask, est_ci)
+}
+
+print(est_ci_fine_mask)
+```
+
+## LMEC for coarse_paired
+```{r}
+Z_coarse_paired_sub <- z_create_matrix(coarse_paired_sub)
+cluster_coarse_paired_sub <- as.numeric(factor(coarse_paired_sub$study_id))
+cens_coarse_paired_sub <- coarse_paired_sub$cens
+yL_coarse_paired_sub <- coarse_paired_sub$mdfy_sample_quant %>% log()
+
+lm <- lmer (yL_coarse_paired_sub ~ (1|study_id) + (1|study_id:sample_id) + mask_yn + mask2 + cough_count, data=coarse_paired_sub)
+x_matrix <- getME(lm, "X")
+
+fit_ML <- lmec(yL=yL_coarse_paired_sub, cens=cens_coarse_paired_sub, X=x_matrix, Z=Z_coarse_paired_sub, cluster=cluster_coarse_paired_sub, maxstep = 200, varstruct = "unstructured", method = "ML")
+
+vars <- c("intercept", "mask_all", "mask2", "cough_count")
+
+est_ci_coarse_mask <- c()
+for (i in c(1:4)){
+  se <- sqrt(diag(fit_ML$varFix))[i]
+  up <- fit_ML$beta[i]+1.96*se
+  low <- fit_ML$beta[i]-1.96*se
+  print(cat(i, fit_ML$beta[i],'(',low, ',', up, ')'))  
+  
+  est <- fit_ML$beta[i]
+  se <- sqrt(diag(fit_ML$varFix))[i]
+  up <- est+1.96*se
+  low <- est-1.96*se
+  
+  est_ci <- c(vars[i], est, low, up)
+  est_ci_coarse_mask <- rbind(est_ci_coarse_mask, est_ci)
+}
+print(est_ci_coarse_mask)
+```
+
+```{r}
+coarsedf <- est_ci_coarse_mask %>% as.data.frame(stringsAsFactors=F)
+coarsedf[,c("V2","V3","V4")] <- coarsedf[, 2:4] %>% apply(c(1,2),function(x) {x %>% as.numeric() %>% signif(2)})
+coarsedf$`Coarse Aerosol` <- coarsedf[,c("V2","V3","V4")] %>% apply(1,function(x) {paste0(x["V2"]," (",x["V3"],", ",x["V4"],")")})
+finedf <- est_ci_fine_mask %>% as.data.frame(stringsAsFactors=F)
+finedf[,c("V2","V3","V4")] <- finedf[, 2:4] %>% apply(c(1,2),function(x) {x %>% as.numeric() %>% signif(2)})
+finedf$`Fine Aerosol` <- finedf[,c("V2","V3","V4")] %>% apply(1,function(x) {paste0(x["V2"]," (",x["V3"],", ",x["V4"],")")})
+outputdf <- coarsedf %>% left_join(finedf,by="V1") %>% select(V1,`Coarse Aerosol`,`Fine Aerosol`)
+write.csv(outputdf,"../table_output/repo_table_s4_paired_mask_regression.csv",row.names=F)
+```

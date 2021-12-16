@@ -1,0 +1,132 @@
+---
+title: "fig_s6_sxonset_to_enrollment"
+author: "Sanmi Adeniaye"
+date: "6/24/2021"
+output:
+  html_document:
+    df_print: paged
+---
+```{r setup, include=FALSE}
+library(dplyr)
+library(stringr)
+library(ggplot2)
+```
+Barplot showing number of days from onset of sx to enrollment date
+```{r}
+cov_pcr_sera_20210702_nomask_complete <- readRDS("../working_files/s1_datasets/s1_cov_pcr_sera_20210805_nomask_complete.RDS") 
+demo <- cov_pcr_sera_20210702_nomask_complete$demohist
+
+demo %>% nrow()
+length(demo$study_id)
+
+table(demo$days_past_onset_at_enroll)
+
+# extract those with no sx, hence no sx onset date
+asx_sid <- demo %>% filter(is.na(real_onset)) %>% pull(study_id) %>% unique() %>% sort()
+asx_sid
+```
+Fill in asx real_onset as first test results.
+From email communication logs, their first tests were:
+295 = 10/10/2020
+315 = 10/30/2020
+414 = 02/04/2021
+```{r}
+demo$real_onset[which(demo$study_id=="315")] <- as.Date("2020-10-30", origin="1970-01-01")
+demo$real_onset[which(demo$study_id=="295")] <- as.Date("2020-10-10", origin="1970-01-01")
+demo$real_onset[which(demo$study_id=="414")] <- as.Date("2021-02-04", origin="1970-01-01")
+```
+Date of first g2 collection
+```{r}
+allsamples <- read.csv("../../source_data/StopCOVIDsamples.csv",stringsAsFactors=F)
+demo$firstg2date <- demo$study_id %>% sapply(function(x) {allsamples %>% filter(study_id==x & grepl("G2|G-II",sample_type)) %>% pull(date_collected_sg) %>% min()}) %>% as.Date(origin="1970-01-01")
+
+demo$days_past_onset_at_enroll <- demo$date_of_enrollment - demo$real_onset
+demo$days_past_onset_at_g2 <- demo$firstg2date - demo$real_onset
+
+demo[which(demo$study_id %in% asx_sid),c("study_id","tag","date_of_enrollment","pos_enrollment","firstg2date","days_past_onset_at_enroll","days_past_onset_at_g2")] 
+```
+
+```{r}
+plot_sx_onset <- ggplot(demo, aes(x=days_past_onset_at_g2,width=5, fill=pos_enrollment)) +
+  geom_bar(stat = "count",alpha=0.8,position=position_dodge2(preserve = "single")) +
+  ylab("Frequency") +
+  xlab ("Days from onset of symptoms or first positive test to participant enrollment") +
+  scale_fill_manual(name="Serology status on date of first breath sample",labels=c("Negative (n=49)","Positive (n=8)"),values=c("#386CB0","#B03838")) +
+  theme(axis.title.x = element_text(size=12, face="bold", colour = "black"),
+        axis.title.y = element_text(size=12, face="bold", colour = "black"),
+        axis.line.x = element_line(color="black", size = 0.3),
+        axis.line.y = element_line(color="black", size = 0.3),
+        axis.text.y = element_text(size = 10, face = "bold"),
+        axis.text.x = element_text(size=10,face = "bold",angle = 0,hjust = 0),
+        legend.position = "bottom") +
+  scale_x_continuous(breaks = c(-1:15)) +
+  scale_y_continuous(expand = c(0,0),breaks = c(0:12), limits=(c(0,11)))                
+
+plot_sx_onset
+ggsave(plot=plot_sx_onset,filename="../figure_output/repo_fig_s6_histogram_onset.png",width=10,height=6,units="in")
+```
+repo_fig_s6 tif
+```{r}
+plot_sx_onset_manu <- ggplot(demo, aes(x=days_past_onset_at_g2,width=5, fill=pos_enrollment)) +
+  geom_bar(stat = "count",alpha=0.8,position=position_dodge2(preserve = "single")) +
+  ylab("Frequency") +
+  xlab ("Days from onset of symptoms or first positive test to participant enrollment") +
+  scale_fill_manual(name="Serology status on date of first breath sample",labels=c("Negative (n=49)","Positive (n=8)"),values=c("#386CB0","#B03838")) +
+  theme(axis.title.x = element_text(size=10, face="bold", colour = "black",family="Arial"),
+        axis.title.y = element_text(size=10, face="bold", colour = "black",family="Arial"),
+        axis.line.x = element_line(color="black", size = 0.3),
+        axis.line.y = element_line(color="black", size = 0.3),
+        axis.text.y = element_text(size = 8, face = "bold",family="Arial"),
+        axis.text.x = element_text(size = 8,face = "bold",angle = 0,hjust = 0,family="Arial"),
+        legend.position = "bottom",
+        legend.title = element_text(size=9,family="Arial"),
+        legend.text = element_text(size=8,family="Arial"),
+        plot.margin=unit(c(5,2.5,2.5,2.5),"mm")) +
+  scale_x_continuous(breaks = c(-1:15)) +
+  scale_y_continuous(expand = c(0,0),breaks = c(0:12), limits=(c(0,11)))                
+
+plot_sx_onset_manu
+ggsave(plot=plot_sx_onset_manu,filename="../figure_output/tif/tif_raw/repo_fig_s6_histogram_onset_manuscript.tif",device="tiff",width=7,height=4.2,units="in",dpi=600)
+ggsave(plot=plot_sx_onset_manu,filename="../figure_output/png_600/repo_fig_s6_histogram_onset_png_600.png",device="png",width=7,height=4.2,units="in",dpi=600)
+```
+Legend
+```{r}
+# who are the 2 with pre-symptomatic MT/aliva samples but G2 was not obtained immediately?
+demo_g2date_enrolldate_discrepants <- demo %>% filter(days_past_onset_at_enroll!=days_past_onset_at_g2) %>% select(study_id,tag,date_of_enrollment,pos_enrollment,firstg2date,real_onset,days_past_onset_at_enroll,days_past_onset_at_g2)
+
+demo_g2date_enrolldate_discrepants
+
+serology <- cov_pcr_sera_20210702_nomask_complete$sero1
+length(unique(serology$study_id))
+
+sero_g2date_enrolldate_discrepants <- serology %>% filter(study_id %in% demo_g2date_enrolldate_discrepants$study_id)
+sero_g2date_enrolldate_discrepants
+
+demo_g2date_enrolldate_discrepants$g2date_minus_enrolldate <- demo_g2date_enrolldate_discrepants$firstg2date - demo_g2date_enrolldate_discrepants$date_of_enrollment
+
+# Count the days post enrollment that g2 samples were obtained from the contacts. This is information the figure legend.
+table(demo_g2date_enrolldate_discrepants$g2date_minus_enrolldate)
+
+# means and SDs per group (negsero, possero, asx). This is also in the legend
+demo_asx <- demo %>% filter(study_id %in% asx_sid)
+asx_mean <- mean(demo_asx$days_past_onset_at_g2) %>% signif(2)
+asx_sd <- sd(demo_asx$days_past_onset_at_g2) %>% signif(2)
+
+demo_nonasx <- demo %>% filter(!(study_id %in% asx_sid))
+nonasx_means <- demo_nonasx$pos_enrollment %>% unique() %>% sapply(function(x) {demo_nonasx %>% filter(pos_enrollment==x) %>% pull(days_past_onset_at_g2) %>% mean() %>% signif(2)})
+nonasx_sds <- demo_nonasx$pos_enrollment %>% unique() %>% sapply(function(x) {demo_nonasx %>% filter(pos_enrollment==x) %>% pull(days_past_onset_at_g2) %>% sd() %>% signif(2)})
+
+dpog2_means_sds <- c(nonasx_means,asx_mean,nonasx_sds,asx_sd) %>% matrix(ncol=2) %>% as.data.frame(stringsAsFactors=F)
+colnames(dpog2_means_sds) <- c("mean_dpog2","sd_dpog2")
+dpog2_means_sds$categ <- c("Negsero","Possero","Asx")
+
+dpog2_means_sds <- dpog2_means_sds %>% select(categ,mean_dpog2,sd_dpog2)
+dpog2_means_sds
+
+write.csv(sero_g2date_enrolldate_discrepants,"../figure_output/repo_fig_s6_sero_g2date_enrolldate_notsame_sids.csv",row.names=F)
+write.csv(demo_g2date_enrolldate_discrepants,"../figure_output/repo_fig_s6_subdemo_g2date_enrolldate_notsame_sids.csv",row.names=F)
+write.csv(dpog2_means_sds,"../figure_output/repo_fig_s6_dpog2_means_sds.csv",row.names=F)
+```
+
+
+

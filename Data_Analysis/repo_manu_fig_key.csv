@@ -1,0 +1,34 @@
+"script","subfolder","output","Manuscript (0.4.4)","Manuscript 0.6.2","Manuscript 2.0.0","Supp App 1.0.0 ","Description"
+"fig_1_2_s7_s8_s11_correlation_violin","figure_output","repo_fig_1_violin_shedding_paired.png","Figure 1",,"Figure 1",,
+"fig_1_2_s7_s8_s11_correlation_violin","figure_output","repo_fig_s11_violin_culture.png","Figure 2",,"Figure 2",,
+,,,,,,,
+"table_1_demo_sx","table_output","repo_table_1_demo_sx.csv","Table 1",,"Table 1",,
+"table_s7ab_merge","table_output","repo_table_s7ab_merged.csv","Table 2",,"Table 2",,
+"table_3_part1_pred_nonpaired, table_3_part2_pred_paired","table_output","repo_table_3_pred_combined.csv","Table 3",,"Table 3",,
+,,,,,,,
+"table_s5_variants","table_output","repo_table_s5_variants.csv","Table S1",,,"Table S1",
+"table_2_seroneg_viral_quant","table_output","repo_table_2_seroneg_viral_quant.csv","Table S2A",,,"Table S2A",
+"table_s7a_alpha_only_viral_quant","table_output","repo_table_s7a_alpha_only_viral_quant.csv","Table S2B",,,"Table S2B",
+"table_s7b_non_alpha_viral_quant","table_output","repo_table_s7b_non_alpha_viral_quant.csv","Table S2C",,,"Table S2C",
+"table_s2_subanalysis_for_table_3","table_output","repo_table_s2_alpha_variant_effect.csv","Table S3",,,"Table S3",
+"table_s3_mask_type","table_output","repo_table_s3_mask_type.csv","Table S4",,,"Table S4",
+"table_s4_paired_mask_regression","table_output","repo_table_s4_paired_mask_regression.csv","Table S5",,,"Table S5",
+"table_s1_seropos_viral_quant","table_output","repo_table_s1_seropos_viral_quant.csv","Table S6",,,"Table S6",
+"table_s7_probability_culture","table_output","repo_table_s7_probability_culture.csv","Table S7",,,"Table S7",
+,,,,,,,
+"(graphic - none)","(none)","(none)","Figure S1",,,"Figure S1",
+"(graphic - none)","(none)","(none)","Figure S2",,,"Figure S2",
+"fig_s1_flowchart","figure_output","repo_fig_s1_flowchart.csv","Figure S3",,,"Figure S3",
+"fig_s6_sxonset_to_enrollment","figure_output","repo_fig_s6_histogram_onset.png","Figure S4",,,"Figure S4",
+"figs_s3_s4_s5_temp_sx_barplot","figure_output","repo_fig_s4_boxplot_sx.png","Figure S5",,,"Figure S5",
+"figs_s3_s4_s5_temp_sx_barplot","figure_output","repo_fig_s3_boxplot_temp.png","Figure S6",,,"Figure S6",
+"figs_s3_s4_s5_temp_sx_barplot","figure_output","repo_fig_s5_histogram_sample_count.png","Figure S7",,,"Figure S7",
+"fig_1_2_s7_s8_s11_correlation_violin","figure_output","repo_fig_s8_mt_saliva_corr.png","Figure S8",,,"Figure S8",
+"fig_1_2_s7_s8_s11_correlation_violin","figure_output","repo_fig_2_mtsalbreath_logcopies_corr.png","Figure S9",,,"Figure S9",
+"fig_1_2_s7_s8_s11_correlation_violin","figure_output","repo_fig_s7_mtsalbreath_ct_corr.png","Figure S10",,,"Figure S10",
+"fig_s12_probability_culture","figure_output","repo_fig_s12_culture_prob_log10RNA.png","Figure S11",,,"Figure S11",
+"table_s7_probability_culture","table_output","repo_table_s7_50_probability.txt",,"Line 236-237","ll. 227-229",,"“The RNA concentration associated with a 50% probability of a positive culture was 7.8 x 10^5 for MTS and 5.2 x 10^6 for saliva (Figure S2).”"
+"manu_results_culture_yesmask_dates","table_output","manu_results_culture_yesmask_dates.txt",,"Lines 239-241","ll. 230-232",,"“Two (3%) of the 66 fine-aerosol samples collected from participants while wearing face masks were culture-positive”"
+"table_2_seroneg_viral_quant","table_output","repo_table_2_fine_below_lod_not_cultured.txt",,"Line 257","ll. 249-250",,"“The other culture-positive aerosol sample was one of 98 aerosol samples below the 75-copy limit of detection for RNA”"
+"table_2_seroneg_viral_quant","table_output","repo_table_2_fine_coarse_compare.txt",,"Line 199 ","ll. 190-192",,"“The quantity of viral RNA in the fine-aerosol fraction was 1.9-fold (95% CI 1.2 to 2.9-fold)”"
+"table_1_demo_sx","table_output","repo_table_1_footnote.txt",,"Line 418 (Table 1 footnote)","ll. 411-412",,"“Days since start of symptoms or first positive test if asymptomatic or presymptomatic to first breath sample; 3 subjects reported no symptoms”"

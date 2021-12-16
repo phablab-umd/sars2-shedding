@@ -1,0 +1,646 @@
+---
+title: "fig_s1_flowchart"
+author: "Sanmi Adenaiye"
+date: "5/27/2021"
+output:
+  html_document: default
+---
+Compute numbers for a flow chart that describes our study cohort.
+```{r include=FALSE}
+library(dplyr)
+library(ggplot2)
+```
+# import complete datasets 
+```{r load datasets}
+allsamples <- read.csv(file="./../../source_data/StopCOVIDsamples.csv",stringsAsFactors=F)
+cov_pcr_sera <- readRDS("./../../analytical_cleaned_datasets/cov_pcr_sera_20210805.RDS")
+pcrscreen <- cov_pcr_sera[["pcr_screen"]]
+qpcr <- cov_pcr_sera[["qpcr_allsamples"]]
+demo <- cov_pcr_sera[["demohist"]]
+sero <- cov_pcr_sera[["sero1"]]
+```
+## 1. Weekly screening
+Volunteers in weekly saliva testing cohort (N)
+Screened samples (n)
+Last samples 6/1/2021
+```{r weekly screening counts}
+drivebysaliva <- pcrscreen %>% filter(redcap_event_name=="driveby_saliva_arm_1" & sample_date <=as.Date("2021-06-01",origin="1970-01-01"))
+drivebysaliva %>% unique() %>% nrow() # number of driveby-screened saliva samples
+drivebysaliva$study_id %>% unique() %>% length() # number of driveby screened participants
+
+# store these in a list
+flowchartlist <- list()
+flowchartlist[["salivacohortsize"]] <- c("Weekly Saliva Testing Cohort",
+                                         paste0("(N = ",drivebysaliva$study_id %>% unique() %>% length(),", weekly samples = ",drivebysaliva %>% unique() %>% nrow(),")"))
+
+# samples X subject
+drivebysaliva %>% group_by(study_id) %>% summarize(`no of samples provided`=n()) %>% group_by(`no of samples provided`) %>% summarize(`no of subjects`=n())
+```
+
+```{r samples per week histogram}
+# samples per week
+drivebysaliva %>% ggplot(
+  aes(x=sample_date)) +
+  geom_bar(stat = "count") +
+  scale_x_date(breaks = "1 week") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)
+)
+```
+
+```{r screening dates}
+# Earliest screening date in this dataset
+min(drivebysaliva$sample_date)
+
+# Last screening date in this dataset
+max(drivebysaliva$sample_date)
+
+# first case detection date
+ctscreencols <- c("ct_ngene_screen","ct_sgene_screen","ct_orf1ab_screen")
+pcrscreen1 <- pcrscreen %>% select(sample_date,all_of(ctscreencols))
+pcrscreen1$pos <- pcrscreen1 %>% apply(c(1,2),function(x) {x<40}) %>% apply(1,function(x) {sum(x)>=2})
+pcrscreen1 %>% filter(pos) %>% pull(sample_date) %>% min()
+
+flowchartlist[["dates"]] <- c(
+  "Start and stop and detection dates",
+  paste0(
+    "The first saliva sample screening occurred on ",
+    min(drivebysaliva$sample_date),
+    " and the last saliva screening occurred on ",
+    max(drivebysaliva$sample_date),
+    ". The first detection date was ",
+    pcrscreen1 %>% filter(pos) %>% pull(sample_date) %>% min(),
+    ".
+"
+  )
+)
+```
+The first saliva sample screening occurred on May 8, 2020 and the last saliva screening occurred on June 1, 2021.
+The first detection date was June 6, 2020.
+
+arm 1 = screening
+arm 2 = direct cases
+arm 3 = contacts
+
+## 1a. Weekly screening volunteers to had a postive on a drivebysaliva
+```{r positive drivebys}
+drivebysaliva$pos <- drivebysaliva[,ctscreencols] %>% 
+  apply(c(1,2),function(x) {x<40}) %>% 
+  apply(1,function(x) {sum(x)>=2})
+drivebysaliva <- drivebysaliva %>% group_by(pos)
+# CDC's criteria for these primers requires that at least two out of three wells have a detection to call it "positive"
+
+drivebysaliva$pos33 <- drivebysaliva[,ctscreencols] %>% 
+  apply(c(1,2),function(x) {x<=33}) %>% 
+  apply(1,function(x) {sum(x)>=2})
+# look at ct <= 33 as cut off for trace detections
+
+# "Number of screening saliva samples that were positive:"
+table((drivebysaliva$pos))
+
+drivebysalivapos40subjs <- drivebysaliva %>% filter(pos) %>% pull(study_id) %>% unique() %>% sort()
+drivebysalivapos33subjs <-  drivebysaliva %>% filter(pos33) %>% pull(study_id) %>% unique() %>% sort()
+drivebysalivapos40subjs %>% subset(!(. %in% drivebysalivapos33subjs))
+
+# if we apply <=33 criterion for 2 wells, we lose subject 350
+```
+
+```{r positive drivebys subject count}
+pos_driveby <- drivebysaliva %>% filter(pos)
+pos_driveby_subj <- unique(pos_driveby$study_id)
+
+# Number of positive driveby subjects (nb: 120 was pos on two consecutive samples)
+length(pos_driveby_subj)
+```
+Visits by people with pos screening saliva.
+Get all pcrscreen data for people with pos driveby saliva sample and  collect these saliva samples in a new dataframe.
+```{r positive arm 1 but not saliva}
+pos_driveby_allother <- pcrscreen %>% filter((study_id %in% pos_driveby_subj) & redcap_event_name!="driveby_saliva_arm_1")
+table(pos_driveby_allother$redcap_event_name)
+```
+
+```{r positive arm 1 but not saliva count}
+# Number of people enrolled based on positive saliva weekly screening
+pos_driveby_allother %>% filter(redcap_event_name=="shedding_initial_arm_1") %>% distinct(study_id, sample_date) %>% nrow()
+pos_driveby_subj %>% subset(!(. %in% pos_driveby_allother$study_id))
+# one participant (350) was not counted as positive due to weak Ct>33 and suspicious curves
+
+flowchartlist[["salivapositives"]] <- c("Cohort Member with Positive Saliva",paste0("N = ",pos_driveby_allother %>% filter(redcap_event_name=="shedding_initial_arm_1") %>% distinct(study_id, sample_date) %>% nrow()))
+```
+
+```{r arm 1 breath samples}
+# did they all give breath samples?
+arm1breathsamples <- allsamples %>% filter((study_id %in% pos_driveby_allother$study_id) & grepl("G-II|G2",sample_type))
+arm1breathsubjs <- arm1breathsamples$study_id %>% unique() %>% sort()
+arm1breathsubjs
+# only the three positive ones happened to give breath samples
+pos_driveby_allother$study_id %>% subset(!(. %in% arm1breathsubjs)) %>% unique() %>% sort()
+# 120 and 326 did the shedding visit but did not give G-II samples, due to time & accessibility respectively
+```
+
+```{r positive drivebys becoming cases}
+pos_driveby_case_v1 <- pos_driveby_allother %>% filter(redcap_event_name=="shedding_initial_arm_1")
+pos_driveby_case_v1$pos_case <- pos_driveby_case_v1[,ctscreencols] %>% 
+  apply(c(1,2),function(x) {x<40}) %>% 
+  apply(1,function(x) {sum(x)>=2})
+pos_driveby_case_v1 <- pos_driveby_case_v1 %>% group_by(pos_case)
+
+#Number of positive cases enrolled based on drive by saliva screening
+pos_driveby_case_v1_summary <- pos_driveby_case_v1 %>% summarize(n=length(unique(study_id)))
+pos_driveby_case_v1_summary
+pos_driveby_case_sid <- pos_driveby_case_v1 %>% filter(pos_case) %>%  pull(study_id) %>% unique()  #saving the 3 ids
+
+flowchartlist[["salivawithoutg2"]] <- c("Did Not Give G-II Samples",paste0("N = ",pos_driveby_case_v1_summary %>% filter(!pos_case) %>% pull(n)))
+flowchartlist[["salivawithg2"]] <- c("Gave G-II Samples",paste0("N = ",pos_driveby_case_v1_summary %>% filter(pos_case) %>% pull(n)))
+flowchartlist[["salivaposmtsal"]] <- c("Positive on MTS/Saliva at case visit",paste0("N = ",pos_driveby_case_v1_summary %>% filter(pos_case) %>% pull(n)))
+```
+
+## 2. Contacts
+Volunteer contacts of cases (enrolled as contacts)
+Number of screening visits done on contacts
+Tested positive in our lab  
+Provided G-II samples  
+```{r contact summary}
+pcrscreen %>% group_by(redcap_event_name) %>% summarize(n=length(unique(study_id)))
+```
+
+Save all events with the arm_3 tag. These represents all events involving subjects who enrolled as contacts. By selecting on arm_3 we get them regardless if they were escalated to a case at what would have been a first contact visit. 
+All contacts also include people who originally enrolled in arm_1 in addition to those in arm_3. 
+So, we want to combine these two groups.
+```{r contact counting setup}
+# all contact sampling events 
+contacts <- pcrscreen %>% filter(grepl("contact_",redcap_event_name))
+contacts_arm_1 <- pcrscreen %>% filter(grepl("contact_initial_arm_1",redcap_event_name))
+contacts_arm_3 <- pcrscreen %>% filter(grepl("contact_initial_arm_3",redcap_event_name))
+all_arm_3 <- pcrscreen%>% filter(grepl("arm_3",redcap_event_name))
+
+# Number of subjects who enrolled as contacts:
+# all subjects who provided contact visits of some sort
+length(unique(contacts$study_id))
+```
+all subjects who enrolled as contacts of cases arm 1
+```{r contact counting 1}
+contact_visited_sid <- unique(contacts$study_id)
+length(unique(contacts_arm_1$study_id))
+```
+all subjects with init contact visit who enrolled as contacts of cases arm 3
+```{r contact counting 2}
+length(unique(contacts_arm_3$study_id))
+```
+all subjects who enrolled as contacts of cases arm 3 regardless of doing contact visits
+```{r contact counting 3}
+length(unique(all_arm_3$study_id))
+```
+all contacts regardless of route into the study
+```{r contact counting 4}
+allcontactstotal <-length(unique(c(contacts$study_id,all_arm_3$study_id)))
+allcontactstotal
+all_contacts_sid <- unique(c(contacts$study_id,all_arm_3$study_id))
+all_contacts <- pcrscreen %>% filter(study_id %in% all_contacts_sid)
+```
+contacts who escalated to cases w/o doing a visit were still entered via arm 3
+therefore, we increase the number of counted contact visits by these four to account for their being screened based on symptoms into case visits at their first encounter
+```{r contact counting 5}
+setdiff(all_contacts_sid,contact_visited_sid) %>% sort()
+```
+Identify study_id in contacts not having an initial visit.
+```{r contacts with no initial visit}
+setdiff(unique(contacts$study_id),c(unique(contacts_arm_1$study_id),unique(contacts_arm_3$study_id))) 
+```
+NB: study_id == "441" did an initial shedding visit, was negative and then did 
+contact_repeat visits. 
+
+### What events/visits did these people participate in?
+
+Note that each record in contacts is for each sample that was obtained.
+```{r}
+contacts %>% filter(study_id==486) %>% select(1:5,sample_type)
+```
+Subject 486 had 2 sampling events on 4/30    
+
+Filter contact visits from these events  
+Then select unique subject-day (randomly picking a sample_type.)
+This will count the number of contact visits held  
+```{r}
+# subject-contact visit, ie. the  number of contact screening visits
+all_contact_visits<-contacts%>%
+  distinct(study_id,sample_date,.keep_all = T) 
+
+# number of contact visits coded as contact visits
+num_contact_screening_visits <- all_contact_visits %>% nrow() 
+num_contact_screening_visits
+
+length(unique(all_contact_visits$study_id)) #all subjects who participated in contact visits
+
+all_shedding_init_arm_3 <- pcrscreen %>% filter(grepl("shedding_initial_arm_3",redcap_event_name))
+#Number of people enrolled case contacts who did an initial shedding visit
+
+length(unique(all_shedding_init_arm_3$study_id))
+```
+
+```{r}
+#What events did people enrolled as contacts do?
+all_contacts %>% group_by(redcap_event_name) %>% summarize(n=length(unique(study_id)))
+```
+Finding number of subjects not in both contacts and initial shedding arm 3. 
+```{r}
+setdiff(unique(all_shedding_init_arm_3$study_id),unique(contacts$study_id)) %>% length()
+# these 4 subjects though enrolled as contacts of cases, did not do a contact visit. They did case visits (confirmed in REDCap)
+```
+
+```{r}
+setdiff(unique(all_shedding_init_arm_3$study_id),unique(contacts$study_id))
+shed_no_contact <- setdiff(unique(all_shedding_init_arm_3$study_id),unique(contacts$study_id))
+# these cases included in addition to the above a person who was escalated to a case at first encounter, but was negative and then followed as a contact.
+```
+
+```{r}
+setdiff(unique(all_shedding_init_arm_3$study_id),unique(contacts_arm_3$study_id)) %>% sort()
+shed_no_contact_init <-setdiff(unique(all_shedding_init_arm_3$study_id),unique(contacts_arm_3$study_id))
+```
+
+```{r}
+setdiff(shed_no_contact_init,shed_no_contact)
+
+flowchartlist[["contactsize"]] <- c("Volunteer Contacts of COVID-19 Cases",
+                                    paste0("(N = ",allcontactstotal,", screening test-days = ",num_contact_screening_visits + length(shed_no_contact_init),")"))
+```
+Of the 62 subjects who enrolled as contacts, 4 of them did not do actual contact visits. These 4 subjects were thought to be cases based on symptoms and  history and escalated to shedding initial visits immediately at first encounter. Also the initial visit for study_id 441 was not counted as a screening visit, because that person was also escalated to shedding visit on first encounter. None of the people enrolled as contact from arm_1 became positive or were escalated to a shedding visit based on symptoms. 
+
+So, the total number of contact screening visits is actually 214 + 5 = 219. 
+
+## 2a. Contacts turned positive
+```{r}
+# implement 2-well criterion
+
+contacts_pcr_pos <- all_contacts
+contacts_pcr_pos$pos <- contacts_pcr_pos[,ctscreencols] %>% apply(c(1,2),function(x) {x<40}) %>% apply(1,function(x) {sum(x)>=2})
+contacts_pcr_pos <- contacts_pcr_pos %>% filter(pos)
+
+contactspos33 <- all_contacts
+contactspos33$pos <- contactspos33[,ctscreencols] %>% apply(c(1,2),function(x) {x<=33}) %>% apply(1,function(x) {sum(x)>=2})
+contactspcr_pos33_sid <- contactspos33 %>% filter(pos) %>% pull(study_id) %>% unique() %>% sort()
+
+contacts_pcr_pos_sid <- unique(contacts_pcr_pos$study_id)
+length(contacts_pcr_pos_sid)
+
+contacts_pcr_pos_sid %>% subset(!(. %in% contactspcr_pos33_sid))
+# if we apply <=33 criterion for 2 wells, we lose subject 436
+
+contacts_pcr_pos_sid <- unique(contacts_pcr_pos$study_id)
+length(contacts_pcr_pos_sid)
+
+flowchartlist[["poscontacts"]] <- c("Contact with Positive Screening",paste0("N = ",length(contacts_pcr_pos_sid)))
+```
+There were 19 subjects (including 436 and 458) who tested positive having entered via arm 3, including the 4 escalated to shedding visits based on symptoms and who tested positive. It doesn't include the cases from arm 1. 
+
+## 3. Participants enrolled directly as cases (arm 2)
+Volunteer confirmed cases  (enrolled as cases)
+Tested positive in our lab  
+Provided G-II samples  
+```{r arm 2 participants}
+pcrscreen %>% group_by(redcap_event_name) %>% summarize(n=length(unique(study_id)))
+# all case sampling events
+
+case <- pcrscreen %>% filter(grepl("arm_2",redcap_event_name))
+arm2subjs <- case$study_id %>% unique() %>% sort()
+arm2subjs %>% length()
+# There were 55 cases with presumptive diagnosis from an outside lab who enrolled for our screening.
+
+flowchartlist[["casesize"]] <- c("Volunteer Confirmed or Probable COVID-19 Cases",paste0("N = ",arm2subjs %>% length()))
+```
+
+```{r arm 2 breath samples}
+arm2samples <- allsamples %>% filter(grepl("G-II|G2",sample_type) & grepl("arm_2",event_id))
+arm2samplessubjs <- arm2samples$study_id %>% unique() %>% sort()
+arm2samplessubjs %>% length()
+# all gave G2 samples
+
+flowchartlist[["caseg2"]] <- c("Gave G-II Samples",paste0("N = ",arm2samplessubjs %>% length()))
+```
+
+```{r arm 2 participants positive}
+# case screening visits
+all_case_visits <- case %>% filter(grepl("shedding",redcap_event_name)) %>% distinct(study_id,sample_date,.keep_all = T) 
+
+# Of the 55, how many had a positive result following pcr screening?
+case_pcr_pos <- case
+case_pcr_pos$pos <- case_pcr_pos[,ctscreencols] %>%
+  apply(c(1,2),function(x) {x<40}) %>%
+  apply(1,function(x) {sum(x)>=2})
+case_pcr_pos <- case_pcr_pos %>% filter(pos)
+
+case_pcr_pos33 <- case
+case_pcr_pos33$pos <- case_pcr_pos33[,ctscreencols] %>%
+  apply(c(1,2),function(x) {x<=33}) %>%
+  apply(1,function(x) {sum(x)>=2})
+case_pcr_pos33 <- case_pcr_pos33 %>% filter(pos)
+
+case_pcr_pos_sid <- case_pcr_pos$study_id %>% unique()
+case_pcr_pos_sid %>% length()
+# 43 of the 55 cases had a positive screening.
+
+flowchartlist[["caseposcount"]] <- c("Positive on MTS/Saliva at case visit",paste0("N = ",case_pcr_pos_sid %>% length()))
+
+case_pcr_pos33_sid <- case_pcr_pos33$study_id %>% unique() %>% sort()
+case_pcr_pos_sid %>% subset(!(. %in% case_pcr_pos33_sid))
+# if we apply <=33 criterion for 2 wells, we lose subject 295
+```
+
+
+```{r arm 2 participants case visits count}
+all_case_visits %>% nrow()
+# there were 106 samplings done on the cases.
+```
+
+```{r arm 2 participants case subjects count}
+length(unique(all_case_visits$study_id))
+# number of subjects who participated in case visits
+```
+
+```{r arm 2 participants compare count}
+length(unique(case$study_id))
+# all subjects who enrolled as case of cases
+
+# Thus all the 55 subjects who enrolled as cases actually did the case visits
+```
+## 4 Provided GII samples (Gave 1 or more breath samples)
+
+Breath samples 
+```{r}
+breath_samples <- qpcr %>% filter(grepl("G-II",sample_type)) %>% select(study_id,sample_id,sample_type)# this appears as replicate per row
+breath_samples <- breath_samples %>% unique()
+table(breath_samples$sample_type)
+breath_samples %>% group_by(sample_type) %>% summarise(n=length(unique(study_id)))
+```
+
+How many of the screened_positive (arm 1) provided G-II samples?
+```{r}
+breath_sample_sid <- unique(breath_samples$study_id)
+screenbreathpos_sid <- pos_driveby_case_sid %>% subset(. %in% breath_sample_sid) %>% sort()
+screenbreathpos_sid
+```
+
+How many of the case_positive (arm 2) provided G-II samples?
+```{r}
+casebreathpos_sid <- case_pcr_pos_sid %>% subset(. %in% breath_sample_sid) %>% sort()
+casebreathpos_sid %>% length()
+
+# and double-check that everyone else was negative
+casebreathneg_sid <- arm2samplessubjs %>% subset(!(. %in% casebreathpos_sid)) %>% sort()
+casebreathneg_sid %>% length()
+
+casenegpcrscreen <- all_case_visits %>% filter(study_id %in% casebreathneg_sid) %>% arrange(as.numeric(study_id),sample_date)
+
+casenegpcrscreen %>% select(study_id,sample_date,ct_avg_screen)
+# note that they are all ct=40
+flowchartlist[["casenegcount"]] <- c("Negative MTS & Saliva at case visit",paste0("N = ",casebreathneg_sid %>% length()))
+```
+How many of the contact_positive (arm 3) provided G-II samples?
+```{r}
+poscontactsyesbreath <- contacts_pcr_pos_sid %>% subset(. %in% breath_sample_sid) %>% sort()
+poscontactsyesbreath %>% length()
+```
+All screened positive subjects provided but 2 contact_positive subjects did not
+
+Who are the 2 contacts_turned positive who did not provide breath samples?
+```{r}
+poscontactsnobreath <- contacts_pcr_pos_sid %>% subset(!(. %in% breath_sample_sid)) %>% sort()
+poscontactsnobreath
+```
+
+When did each of them test positive?
+```{r}
+poscontactsnobreathdf <- poscontactsnobreath %>% lapply(function(x) {
+  contacts_pcr_pos %>% filter(study_id==x & ct_avg_screen<40) %>% select(study_id,sample_type,sample_date,ctscreencols)
+  })
+poscontactsnobreathdf
+
+flowchartlist[["contactsg2"]] <- c("Gave G-II Samples",paste0("N = ",poscontactsyesbreath %>% length()))
+flowchartlist[["contactslosttofu"]] <- c("Lost to follow-up",paste0("N = ",poscontactsnobreath %>% length()))
+
+# decision to categorize 436 and 458 as false positives. This is borne out by the fact that sample_quant=0 for all their samples before and after.
+contacts_transient_pos <- c("436","458")
+poscontactsyesbreath_real <- poscontactsyesbreath %>% subset(!(. %in% contacts_transient_pos))
+flowchartlist[["contactsfinalrealpos"]] <- c("Positive on MTS/Saliva at case visit",paste0("N = ",poscontactsyesbreath_real %>% length()))
+flowchartlist[["contactstransientpos"]] <- c("Negative MTS & Saliva at case visit",paste0("N = ",contacts_transient_pos %>% length()))
+```
+418 was scheduled for breath collection visit but cancelled at the last minute
+413 not sure, seems like a no show
+(460 was in this list originally but only tested for 1 out of 3 genes, on two days, so not actually positive) 
+
+# Bringing all positive sids together   
+```{r fullcounts}
+poswithbreathlist <- list(screenbreathpos_sid,casebreathpos_sid,poscontactsyesbreath_real)
+names(poswithbreathlist) <- c("screen","case","contact")
+length(poswithbreathlist %>% unlist())
+
+flowchartlist[["anybreath"]] <- c("Gave any breath samples",paste0("N = ",length(poswithbreathlist %>% unlist())))
+```
+
+## 5. Check seronegatives
+```{r seronegatives}
+# use pos_enrollment from demo since this has been cleaned up in Merger_file2
+serodata <- demo %>% filter(study_id %in% unlist(poswithbreathlist))
+serodata %>% group_by(pos_enrollment) %>% summarise(n=length(pos_enrollment))
+serostatuslist <- serodata$pos_enrollment %>% sort() %>% unique() %>% sapply(function(x) {serodata %>% filter(pos_enrollment==x) %>% pull(study_id) %>% as.numeric() %>% sort()}) # pull out specific study ids in each category
+names(serostatuslist) <- serodata$pos_enrollment %>% sort() %>% unique()
+serostatuslist
+serostatuslist %>% lapply(length)
+# 50 were seronegative at initial; 7 were seropositive at initial; that leaves 61-57 = 4 serounknown
+
+serounknown <- serostatuslist[["unknown"]]
+serounknown
+
+flowchartlist[["seronegcount"]] <- c("Seronegative at Shedding Visit #1",paste0("N = ",serostatuslist[["Negative"]] %>% length()))
+flowchartlist[["serounknowncount"]] <- c("No Sera from Shedding Visit #1",paste0("N = ",serounknown %>% length()))
+flowchartlist[["seroposcount"]] <- c("Seropositve at Shedding Visit #1",paste0("N = ",serostatuslist[["Positive"]] %>% length()))
+```
+243 - "Tried two sticks but blood did not come out." however there was blood at the second shedding visit, back when we were still doing blood on repeat visits
+
+367 - "This participant is a hard stick and I could not get anything after trying. "
+
+375 - "Cannot get the blood"
+
+433 - "Struggled some time, stuck her once, her arms started to feel numb, and still not visible and tangible."
+
+number of mask/nomask sessions at shedding visit #1
+```{r create lists of G-II sessions}
+serocategories <- names(serostatuslist)
+qpcr_samples_based_on_serocategories <- serocategories %>% lapply(function(x) {
+  qpcr %>%
+    filter((study_id %in% serostatuslist[[x]]) & grepl("G-II|G2",sample_type)) %>%
+    select(study_id,sample_id,sample_date,sample_type,mask_yn) %>% unique()
+  })
+
+# qpcr data frame doesn't have redcap event names, so pull those over from allsamples
+qpcr_samples_based_on_serocategories <- qpcr_samples_based_on_serocategories %>% lapply(function(x) {
+  x %>% left_join(allsamples %>% select(sample_id,event_id,instance),by="sample_id")
+}) 
+
+# instance="null" for some of them because shedding_initial and shedding_repeat were originally not repeating events. Can set instance="null" to 1
+for (i in 1:length(qpcr_samples_based_on_serocategories)) {
+  qpcr_samples_based_on_serocategories[[i]]$instance[qpcr_samples_based_on_serocategories[[i]]$instance=="null"] <- "1"
+}
+names(qpcr_samples_based_on_serocategories) <- serocategories
+qpcr_samples_based_on_serocategories %>% lapply(head)
+```
+
+```{r explore instance 2}
+qpcr_multisheddinginstance <- qpcr_samples_based_on_serocategories %>% lapply(function(x) {x %>% filter(instance!="1")})
+qpcr_multisheddinginstance %>% lapply(function(x) {x %>% select(study_id,event_id,instance) %>% unique()})
+# these are all third shedding visits: 374, 375, 376
+```
+
+```{r mask & nomask count for shedding initial}
+initialsessioncount <- qpcr_samples_based_on_serocategories %>% lapply(function(x) {
+  x %>% filter(grepl("initial",event_id)) %>% select(study_id,sample_date,mask_yn,event_id) %>% unique() %>% arrange(as.numeric(study_id),sample_date)
+})
+initialsessioncount %>% lapply(nrow)
+initialsessioncount %>% lapply(head)
+
+initialsessioncount %>% lapply(function(x) {x %>% filter(mask_yn==1) %>% nrow()})
+# yesmask sessions, initial session: seronegative=45, seropositive=8, serounknown=4
+
+flowchartlist[["g2visit1seronegyesmask"]] <- c("Shedding Visit #1 [seronegative]",paste0("n(w mask) = ",initialsessioncount[["Negative"]] %>% filter(mask_yn==1) %>% nrow()))
+flowchartlist[["g2visit1serounkyesmask"]] <- c("Shedding Visit #1 [serounknown]",paste0("n(w mask) = ",initialsessioncount[["unknown"]] %>% filter(mask_yn==1) %>% nrow()))
+flowchartlist[["g2visit1seroposyesmask"]] <- c("Shedding Visit #1 [seropositive]",paste0("n(w mask) = ",initialsessioncount[["Positive"]] %>% filter(mask_yn==1) %>% nrow()))
+
+initialsessioncount %>% lapply(function(x) {x %>% filter(mask_yn==0) %>% nrow()})
+# nomask sessions, initial session: seronegative=49, seropositive=8, serounknown=4
+
+flowchartlist[["g2visit1seronegnomask"]] <- c("Shedding Visit #1 [seronegative]",paste0("n(w/o mask) = ",initialsessioncount[["Negative"]] %>% filter(mask_yn==0) %>% nrow()))
+flowchartlist[["g2visit1serounknomask"]] <- c("Shedding Visit #1 [serounknown]",paste0("n(w/o mask) = ",initialsessioncount[["unknown"]] %>% filter(mask_yn==0) %>% nrow()))
+flowchartlist[["g2visit1seroposnomask"]] <- c("Shedding Visit #1 [seropositive]",paste0("n(w/o mask) = ",initialsessioncount[["Positive"]] %>% filter(mask_yn==0) %>% nrow()))
+```
+
+```{r mask & nomask count for first shedding repeat}
+secondsessioncount <- qpcr_samples_based_on_serocategories %>% lapply(function(x) {
+  x %>% filter(grepl("repeat",event_id) & instance=="1") %>% select(study_id,sample_date,mask_yn,event_id) %>% unique() %>% arrange(as.numeric(study_id),sample_date)
+})
+secondsessioncount %>% lapply(nrow)
+secondsessioncount %>% lapply(head)
+
+secondsessioncount %>% lapply(function(x) {x %>% filter(mask_yn==1) %>% nrow()})
+# yesmask sessions, second session: seronegative=24, seropositive=6, serounknown=2
+
+flowchartlist[["g2visit2seronegyesmask"]] <- c("Shedding Visit #2 [seronegative]",paste0("n(w mask) = ",secondsessioncount[["Negative"]] %>% filter(mask_yn==1) %>% nrow()))
+flowchartlist[["g2visit2serounkyesmask"]] <- c("Shedding Visit #2 [serounknown]",paste0("n(w mask) = ",secondsessioncount[["unknown"]] %>% filter(mask_yn==1) %>% nrow()))
+flowchartlist[["g2visit2seroposyesmask"]] <- c("Shedding Visit #2 [seropositive]",paste0("n(w mask) = ",secondsessioncount[["Positive"]] %>% filter(mask_yn==1) %>% nrow()))
+
+secondsessioncount %>% lapply(function(x) {x %>% filter(mask_yn==0) %>% nrow()})
+# nomask sessions, second session: seronegative=27, seropositive=7, serounknown=2
+
+flowchartlist[["g2visit2seronegnomask"]] <- c("Shedding Visit #2 [seronegative]",paste0("n(w/o mask) = ",secondsessioncount[["Negative"]] %>% filter(mask_yn==0) %>% nrow()))
+flowchartlist[["g2visit2serounknomask"]] <- c("Shedding Visit #2 [serounknown]",paste0("n(w/o mask) = ",secondsessioncount[["unknown"]] %>% filter(mask_yn==0) %>% nrow()))
+flowchartlist[["g2visit2seroposnomask"]] <- c("Shedding Visit #2 [seropositive]",paste0("n(w/o mask) = ",secondsessioncount[["Positive"]] %>% filter(mask_yn==0) %>% nrow()))
+```
+
+Positives by quant PCR
+```{r}
+pcr_pos_sid <- c(case_pcr_pos_sid,contacts_pcr_pos_sid,pos_driveby_case_sid)
+qpcr_pos_sid <- unique(qpcr%>%filter(sample_type %in% c("Midturbinate Swab","Saliva"))%>%filter(sample_quant>0)%>%pull(study_id))
+setdiff(pcr_pos_sid,qpcr_pos_sid)
+# 2 subjects pcr_pos_sid but not qpcr positve
+setdiff(qpcr_pos_sid,pcr_pos_sid)
+# 2 subjects with qpcr positve but not pcr screening positive
+
+# Of the qpcr pos subjects, how many did not provided breath samples?
+setdiff(qpcr_pos_sid, breath_sample_sid)
+```
+
+```{r mask-nomask pairs}
+# count for mask/nomask pairs
+initpaired <- list()
+secondpaired <- list()
+for (i in serocategories) {
+  i1masked <- initialsessioncount[[i]] %>% filter(mask_yn==1) %>% pull(study_id)
+  i1nomasked <- initialsessioncount[[i]] %>% filter(mask_yn==0) %>% pull(study_id)
+  initpaired[[i]] <- intersect(i1masked,i1nomasked) %>% length()
+  i2masked <- secondsessioncount[[i]] %>% filter(mask_yn==1) %>% pull(study_id)
+  i2nomasked <- secondsessioncount[[i]] %>% filter(mask_yn==0) %>% pull(study_id)
+  secondpaired[[i]] <- intersect(i2masked,i2nomasked) %>% length()
+}
+initpaired
+# for the initial shedding visit, paired sessions = 45 for seronegative, 4 for serounknown, 8 for seropositive
+
+flowchartlist[["g2visit1seronegpaired"]] <- c("Shedding Visit #1 [seronegative]",paste0("n(paired) = ",initpaired[["Negative"]]))
+flowchartlist[["g2visit1serounkpaired"]] <- c("Shedding Visit #1 [serounknown]",paste0("n(paired) = ",initpaired[["unknown"]]))
+flowchartlist[["g2visit1seropospaired"]] <- c("Shedding Visit #1 [seropositive]",paste0("n(paired) = ",initpaired[["Positive"]]))
+
+secondpaired
+# for the second shedding visit, paired sessions = 22 for seronegative, 2 for serounknown, 6 for seropositive
+
+flowchartlist[["g2visit2seronegpaired"]] <- c("Shedding Visit #2 [seronegative]",paste0("n(paired) = ",secondpaired[["Negative"]]))
+flowchartlist[["g2visit2serounkpaired"]] <- c("Shedding Visit #2 [serounknown]",paste0("n(paired) = ",secondpaired[["unknown"]]))
+flowchartlist[["g2visit2seropospaired"]] <- c("Shedding Visit #2 [seropositive]",paste0("n(paired) = ",secondpaired[["Positive"]]))
+```
+
+## S1 datasets
+Plan to restrict datasets to the 63 participants with positive breath samples, minus the 4 serounknown
+```{r keysubjects}
+keysubjects <- poswithbreathlist %>% unlist() %>% subset(!(. %in% serounknown))
+length(keysubjects)
+keysubjectsplus_df <- demo %>% filter(study_id %in% unlist(poswithbreathlist)) %>% select(study_id,pos_enrollment)
+write.csv(keysubjectsplus_df,file="../working_files/keysubjectsplus.csv",row.names=F)
+```
+recreate datasets with keysubjects
+```{r new dataset}
+# function to count up rows and study ids in each data frame
+showrowsandsubjs <- function(x) {
+  y <- x %>% lapply(nrow)
+  z <- x %>% lapply(function(m) {m %>% pull(study_id) %>% unique() %>% length()})
+  names(y) <- paste0("nrows_",names(y))
+  names(z) <- paste0("nsubjs_",names(z))
+  return(c(y,z))
+}
+
+comparekeysubjs <- function(x) {
+  xsubjs <- x %>% lapply(function(m) {m %>% pull(study_id)}) %>% unlist() %>% unique()
+  z <- keysubjects %>% subset(!(. %in% xsubjs))
+  if (length(z)>0) {
+    returnmsg <- paste0("Key subjects not in set: ",z %>% paste(collapse=" "))
+  } else {
+    returnmsg <- "All key subjects are in the set."
+  }
+  return(returnmsg)
+}
+
+paired_complete <- readRDS(file="./../../analytical_cleaned_datasets/cov_pcr_sera_20210805_paired_complete.RDS") 
+showrowsandsubjs(paired_complete)
+paired_complete_1 <- paired_complete %>% lapply(function(x) {x %>% filter(study_id %in% keysubjects)})
+showrowsandsubjs(paired_complete_1)
+comparekeysubjs(paired_complete_1)
+newpairedcompletefilename <- paste0("../working_files/s1_datasets/s1_cov_pcr_sera_",Sys.Date() %>% format("%Y%m%d"),"_paired_complete.RDS")
+saveRDS(paired_complete_1,file=newpairedcompletefilename)
+
+nomask_complete <- readRDS(file="./../../analytical_cleaned_datasets/cov_pcr_sera_20210805_nomask_complete.RDS") 
+showrowsandsubjs(nomask_complete)
+nomask_complete_1 <- nomask_complete %>% lapply(function(x) {x %>% filter(study_id %in% keysubjects)})
+showrowsandsubjs(nomask_complete_1)
+comparekeysubjs(nomask_complete_1)
+newnomaskcompletefilename <- paste0("../working_files/s1_datasets/s1_cov_pcr_sera_",Sys.Date() %>% format("%Y%m%d"),"_nomask_complete.RDS")
+saveRDS(nomask_complete_1,file=newnomaskcompletefilename)
+
+yesmask_complete <- readRDS(file="./../../analytical_cleaned_datasets/cov_pcr_sera_20210805_yesmask_complete.RDS") 
+showrowsandsubjs(yesmask_complete)
+yesmask_complete_1 <- yesmask_complete %>% lapply(function(x) {x %>% filter(study_id %in% keysubjects)})
+showrowsandsubjs(yesmask_complete_1)
+comparekeysubjs(yesmask_complete_1)
+newyesmaskcompletefilename <- paste0("../working_files/s1_datasets/s1_cov_pcr_sera_",Sys.Date() %>% format("%Y%m%d"),"_yesmask_complete.RDS")
+saveRDS(yesmask_complete_1,file=newyesmaskcompletefilename)
+```
+Flowchart output list
+```{r flowchart output}
+flowchartdf <- flowchartlist %>% bind_rows() %>% t() %>% as.data.frame(stringsAsFactors=F)
+colnames(flowchartdf) <- c("text description","text values")
+flowchartdf$varnames <- names(flowchartlist)
+flowchartdf <- flowchartdf %>% select(varnames,`text description`,`text values`)
+
+# reorder flowchart - this is manually created, to help with transferring to the actual manuscript
+flowchartdf1 <- read.csv("../working_files/order_of_repo_fig_s1_flowchart.csv",stringsAsFactors = F)
+flowchartdf1 <- flowchartdf1 %>% left_join(flowchartdf,by="varnames")
+flowchartdf1$order_in_dataframe <- NULL
+
+flowchartdf1
+write.csv(flowchartdf1,file="../figure_output/repo_fig_s1_flowchart.csv",row.names=F)
+```

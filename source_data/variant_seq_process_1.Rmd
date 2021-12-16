@@ -1,0 +1,59 @@
+---
+title: "variant_seq_process_1"
+author: "Filbert Hong"
+date: "07/10/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(aws.s3)
+```
+source files
+```{r source files}
+IGSseqraw <- read.csv("variant seq files/IGS_deep_seq_results.csv",stringsAsFactors = F)
+WRAIRraw <- read.csv("variant seq files/WRAIR_deep_seq_results.csv",stringsAsFactors = F)
+allsamples <- read.csv("StopCOVIDsamples.csv",stringsAsFactors = F)
+```
+IGS sequencing results
+```{r IGS file}
+IGSseq <- IGSseqraw
+
+# We think that the results for samples 260400 (subject 464) and 260522 (subject 462) have been switched; they don't agree with our pcr screening results
+# We think that they were switched because
+# a) the results are not in agreement with the SGTF results of which we are certain because multiple samples from the same subjects agree in every instance
+# b) the samples were next to each other in the box shipped to IGS
+IGSseq$seqName[IGSseq$seqName=="260400"] <- "260522-real"
+IGSseq$seqName[IGSseq$seqName=="260522"] <- "260400-real"
+IGSseq$seqName <- IGSseq$seqName %>% substr(1,6)
+
+IGSseq1 <- IGSseq %>% left_join(allsamples %>% select(study_id,date_collected_sg,sample_id),by=c("seqName"="sample_id"))
+IGSseq1a <- IGSseq1 %>% select(study_id,seqName,date_collected_sg,clade,Pango.Lineage,qc.overallStatus) %>% rename(sample_id=seqName,sample_date=date_collected_sg)
+
+# corrections for participants 98 (255309) and 99 (255317)
+correctionsubjs <- c(98,99)
+IGSseq1a$Pango.Lineage[which(IGSseq1a$study_id %in% correctionsubjs)] <- "unknown"
+IGSseq1a$clade[IGSseq1a$study_id==99] <- "unknown"
+
+B117subjs <- IGSseq1a %>% filter(Pango.Lineage=="B.1.1.7") %>% pull(study_id)
+B117subjs
+
+IGSseq1a <- IGSseq1a %>% arrange(Pango.Lineage,study_id)
+```
+WRAIR sequencing results
+```{r WRAIR files}
+WRAIRseq <- WRAIRraw
+WRAIRseq <- WRAIRseq %>% left_join(allsamples %>% select(study_id,date_collected_sg,sample_id),by=c("seqNam"="sample_id"))
+WRAIRseq1a <- WRAIRseq %>% select(study_id,seqNam,date_collected_sg,NextSTrain.clade,Pango.lineage,QCoverallStatus) %>% rename(sample_id=seqNam,sample_date=date_collected_sg,clade=NextSTrain.clade,Pango.Lineage=Pango.lineage,qc.overallStatus=QCoverallStatus)
+WRAIRseq1a <- WRAIRseq1a %>% filter(!is.na(study_id))
+```
+
+```{r Combine WRAIR & IGS}
+allseqs <- bind_rows(IGSseq1a,WRAIRseq1a)
+allseqs <- allseqs %>% arrange(Pango.Lineage,study_id)
+```
+
+```{r write files}
+write.csv(allseqs,file="allseqs.csv",row.names=F)
+```

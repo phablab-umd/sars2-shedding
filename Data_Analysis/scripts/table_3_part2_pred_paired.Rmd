@@ -1,0 +1,142 @@
+---
+title: "table_3_part2_paired"
+author: "Jianyu Lai"
+date: "6/20/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(Matrix)
+library(mvtnorm)
+library(lme4)
+library(lmec)
+library(tidyverse)
+source("z_create_matrix.R")
+set.seed(42)
+```
+data: paired rpr filtered for negsero participants
+```{r}
+rpr <- read.csv("../working_files/paired_pcr_sx_rpr.csv")
+paired_rpr <- rpr %>% filter(pos_enrollment=="Negative")
+paired_rpr <- paired_rpr %>% mutate(period = as.numeric(as.Date(sample_date) > "2020-12-31"),
+                                    sgene = as.factor(S.gene.dropout))
+```
+specific fine_paired & coarse_paired datasets
+```{r}
+fine_paired <- paired_rpr %>% filter(sample_type %in% c("G-II Fine Aerosol","G-II Fine Aerosol mask"))
+length(unique(fine_paired$study_id))
+length(unique(fine_paired$sample_id))
+
+coarse_paired <- paired_rpr %>% filter(sample_type %in% c("G-II Coarse Aerosol", "G-II Coarse Aerosol mask"))
+length(unique(coarse_paired$study_id))
+length(unique(coarse_paired$sample_id))
+```
+# The effect of mask on fine aerosols, accounting for cough_count
+fine aerosol
+```{r}
+Z_fine_paired<- z_create_matrix(fine_paired)
+cluster_fine_paired <- as.numeric(factor(fine_paired$study_id))
+cens_fine_paired <- fine_paired$cens
+yL_fine_paired <- fine_paired$mdfy_sample_quant %>% log()
+```
+fine lmec
+```{r}
+est_ci_fine_paired <- c()
+lm <- lmer (yL_fine_paired ~ (1|study_id) + (1|study_id:sample_id) + sgene + mask_yn + cough_count + sgene*mask_yn, data=fine_paired)
+x_matrix <- getME(lm, "X")
+vars <- c("intercept", "sgene", "Mask", "Cough count", "sgene*mask")
+fit_ML <- lmec(yL=yL_fine_paired, cens=cens_fine_paired, X=x_matrix, Z=Z_fine_paired, cluster=cluster_fine_paired, maxstep = 200, varstruct = "unstructured", method = "ML")
+
+for (i in c(2:5)) {
+                est <- fit_ML$beta[i]
+                se <- sqrt(diag(fit_ML$varFix))[i]
+                up <- est+1.96*se
+                low <- est-1.96*se
+                est_ci <- c(vars[i], est, low, up)
+                est_ci_fine_paired <- rbind(est_ci_fine_paired, est_ci)    
+}
+est_ci_fine_paired
+```
+coarse aerosols
+```{r}
+Z_coarse_paired<- z_create_matrix(coarse_paired)
+cluster_coarse_paired <- as.numeric(factor(coarse_paired$study_id))
+cens_coarse_paired <- coarse_paired$cens
+yL_coarse_paired <- coarse_paired$mdfy_sample_quant %>% log()
+```
+The effect of mask on coarse aerosol adjusting for cough_count
+```{r}
+est_ci_coarse_paired <- c()
+lm <- lmer (yL_coarse_paired ~ (1|study_id) + (1|study_id:sample_id) + sgene + mask_yn + cough_count + sgene*mask_yn, data=coarse_paired)
+x_matrix <- getME(lm, "X")
+vars <- c("intercept", "sgene", "Mask", "Cough count", "sgene*mask")
+fit_ML <- lmec(yL=yL_coarse_paired, cens=cens_coarse_paired, X=x_matrix, Z=Z_coarse_paired, cluster=cluster_coarse_paired, maxstep = 200, varstruct = "unstructured", method = "ML")
+for (i in c(2:5)){
+                est <- fit_ML$beta[i]
+                se <- sqrt(diag(fit_ML$varFix))[i]
+                up <- est+1.96*se
+                low <- est-1.96*se
+                est_ci <- c(vars[i], est, low, up)
+                est_ci_coarse_paired <- rbind(est_ci_coarse_paired, est_ci)    
+}
+est_ci_coarse_paired
+```
+output
+```{r}
+exptransform <- function(x) {
+  y <- exp(x) %>% signif(2)
+  return(y)
+}
+
+coarse_df <- est_ci_coarse_paired %>% as.data.frame(stringsAsFactors=F)
+colnames(coarse_df) <- c("varname","beta_lmec","ci_low","ci_high")
+coarse_df$beta_1 <- coarse_df$beta_lmec %>% as.numeric() %>% sapply(exptransform)
+coarse_df$ci_low_1 <- coarse_df$ci_low %>% as.numeric() %>% sapply(exptransform)
+coarse_df$ci_high_1 <- coarse_df$ci_high %>% as.numeric() %>% sapply(exptransform)
+coarse_df$predict1 <- coarse_df[,c("beta_1","ci_low_1","ci_high_1")] %>% apply(1,function(x) {paste0(x["beta_1"]," (",x["ci_low_1"],", ",x["ci_high_1"],")")})
+
+fine_df <- est_ci_fine_paired %>% as.data.frame(stringsAsFactors=F)
+colnames(fine_df) <- c("varname","beta_lmec","ci_low","ci_high")
+fine_df$beta_1 <- fine_df$beta_lmec %>% as.numeric() %>% sapply(exptransform)
+fine_df$ci_low_1 <- fine_df$ci_low %>% as.numeric() %>% sapply(exptransform)
+fine_df$ci_high_1 <- fine_df$ci_high %>% as.numeric() %>% sapply(exptransform)
+fine_df$predict1 <- fine_df[,c("beta_1","ci_low_1","ci_high_1")] %>% apply(1,function(x) {paste0(x["beta_1"]," (",x["ci_low_1"],", ",x["ci_high_1"],")")})
+
+table3_2_output <- coarse_df %>% select(varname,predict1) %>% rename(`Coarse Paired`=predict1)
+table3_2_output <- table3_2_output %>% left_join(fine_df %>% select(varname,predict1),by="varname") %>% rename(`Fine Paired`=predict1)
+table3_2_output$varname[table3_2_output$varname=="Cough count"] <- "cough_count"
+
+table3_1_output <- read.csv(file="../table_output/repo_table_3_part1_temp.csv",stringsAsFactors=F)
+
+table3_combined <- table3_1_output %>% full_join(table3_2_output,by="varname")
+
+colnames(table3_combined) <- colnames(table3_combined) %>% gsub("\\."," ",.) # read.csv doesn't like spaces in the column names, so substitutes a period
+table3_combined[is.na(table3_combined)] <- "-"
+
+# reorder the entries
+
+tableorder <- c("sgene","Mask","age_entry","dpo","log_mt","log_sal","cough_count","ur","lr","gi","sys","sgene*mask")
+
+table3_combined_1 <- matrix(tableorder,ncol=1) %>% as.data.frame(stringsAsFactors=F)
+colnames(table3_combined_1) <- "varname"
+table3_combined_1 <- table3_combined_1 %>% left_join(table3_combined,by="varname")
+
+table3_combined_1 <- table3_combined_1 %>% select(varname,`Coarse Unadjusted`,`Coarse Adjusted`,`Coarse Paired`,`Fine Unadjusted`,`Fine Adjusted`,`Fine Paired`)
+table3_combined_1$varname[table3_combined_1$varname=="sgene"] <- "Alpha Variant"
+table3_combined_1$varname[table3_combined_1$varname=="Mask"] <- "Face mask"
+table3_combined_1$varname[table3_combined_1$varname=="age_entry"] <- "age"
+table3_combined_1$varname[table3_combined_1$varname=="dpo"] <- "Day post-symptom onset"
+table3_combined_1$varname[table3_combined_1$varname=="log_mt"] <- "Log mid-turbinate swab"
+table3_combined_1$varname[table3_combined_1$varname=="log_sal"] <- "Log saliva"
+table3_combined_1$varname[table3_combined_1$varname=="cough_count"] <- "Number of coughs"
+table3_combined_1$varname[table3_combined_1$varname=="ur"] <- "Upper respiratory symptoms"
+table3_combined_1$varname[table3_combined_1$varname=="lr"] <- "Lower respiratory symptoms"
+table3_combined_1$varname[table3_combined_1$varname=="gi"] <- "Gastrointestinal symptoms"
+table3_combined_1$varname[table3_combined_1$varname=="sys"] <- "Systemic symptoms"
+table3_combined_1$varname[table3_combined_1$varname=="sgene*mask"] <- "Alpha Variant x Face mask"
+
+table3_combined_1
+
+write.csv(table3_combined_1,file="../table_output/repo_table_3_pred_combined.csv",row.names = F)
+```
