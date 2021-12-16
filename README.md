@@ -1,3 +1,5 @@
+Repository link: https://github.com/phablab-umd/sars2-shedding
+
 Manuscript: "Infectious Severe Acute Respiratory Syndrome Coronavirus 2 (SARS-CoV-2) in Exhaled Aerosols and Efficacy of Masks During Early Mild Infection"
 Oluwasanmi O Adenaiye, Jianyu Lai, P Jacob Bueno de Mesquita, Filbert Hong, Somayeh Youssefi, Jennifer German, S-H Sheldon Tai, Barbara Albert, Maria Schanz, Stuart Weston, Jun Hang, Christian Fung, Hye Kyung Chung, Kristen K Coleman, Nicolae Sapoval, Todd Treangen, Irina Maljkovic Berry, Kristin Mullins, Matthew Frieman, Tianzhou Ma, Donald K Milton, University of Maryland StopCOVID Research Group
 Clinical Infectious Diseases, 2021
